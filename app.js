@@ -2,7 +2,7 @@
 // I documenti restano sul dispositivo: nessun caricamento online.
 import * as pdfjsLib from './lib/pdf.min.mjs';
 
-const VERSIONE = '2026-11-12a';
+const VERSIONE = '2026-11-12b';
 const LIB = new URL('./lib/', import.meta.url).href;
 pdfjsLib.GlobalWorkerOptions.workerSrc = LIB + 'pdf.worker.min.mjs';
 const { PDFDocument, StandardFonts, rgb, degrees, BlendMode, LineCapStyle } = window.PDFLib;
@@ -284,8 +284,8 @@ function bindSvg(r) {
       if (!was) { select(r.p.id, id); if (e.pointerType !== 'mouse') return; }
       const a = r.p.ann.find(q => q.id === id);
       drag = { k: 'move', r, a, x, y, moved: false };
-    } else if (tool === 'hl' || tool === 'cover') {
-      const tmp = sv('rect', { x, y, width: 0, height: 0, fill: tool === 'hl' ? S.hlColor : '#1a73e8', opacity: .35 });
+    } else if (tool === 'hl' || tool === 'cover' || tool === 'erase') {
+      const tmp = sv('rect', { x, y, width: 0, height: 0, fill: tool === 'hl' ? S.hlColor : tool === 'erase' ? '#c62828' : '#1a73e8', opacity: .35 });
       r.g.append(tmp); drag = { k: 'rect', r, x, y, tmp, tool };
     } else if (tool === 'ink') {
       const tmp = sv('polyline', { fill: 'none', stroke: S.inkColor, 'stroke-width': S.inkW, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', points: `${x},${y}` });
@@ -325,6 +325,7 @@ function bindSvg(r) {
       const box = { x: Math.min(x, d.x), y: Math.min(y, d.y), w: Math.abs(x - d.x), h: Math.abs(y - d.y) };
       const small = box.w * S.scale < 6 || box.h * S.scale < 6;
       if (d.tool === 'hl') { if (!small) { snap(); r.p.ann.push({ id: nid(), t: 'hl', ...box, c: S.hlColor }); drawAnn(r); } else toast('Trascina sopra il testo da evidenziare'); }
+      else if (d.tool === 'erase') cancella(r, small ? null : box, d.x, d.y);
       else correggi(r, small ? null : box, d.x, d.y);
     } else if (d.k === 'ink') {
       if (d.pts.length > 1) { snap(); r.p.ann.push({ id: nid(), t: 'ink', pts: d.pts, c: S.inkColor, lw: S.inkW }); drawAnn(r); }
@@ -422,6 +423,27 @@ async function correggi(r, box, x, y) {
     r.p.ann.push({ id: nid(), t: 'cover', ...box, bg: col.bg, tx: it ? it.x : box.x + 1.5, by: it ? it.by : box.y + box.h / 2 + v.size * 0.35, ...v });
     drawAnn(r);
   }, () => tmp.remove());
+}
+
+/* ---------- cancella ---------- */
+// Tocco: toglie l'aggiunta (nota, firma, evidenziazione…) o la scritta del PDF che si trova in quel punto.
+// Riquadro: cancella tutto quello che c'è dentro. Nel file salvato il contenuto cancellato viene tolto davvero.
+async function cancella(r, box, x, y) {
+  const p = r.p;
+  if (!box) {
+    for (let i = p.ann.length - 1; i >= 0; i--) {
+      const b = bbox(p.ann[i]);
+      if (x >= b.x - 2 && x <= b.x + b.w + 2 && y >= b.y - 2 && y <= b.y + b.h + 2) { snap(); p.ann.splice(i, 1); drawAnn(r); return; }
+    }
+    const items = await textItems(p).catch(() => []);
+    const it = items.find(i => i.flat && x >= i.x - 2 && x <= i.x + i.w + 2 && y >= i.by - i.fh * 1.05 && y <= i.by + i.fh * 0.35);
+    if (!it) return toast('Qui non trovo una scritta: trascina un riquadro sopra la parte da cancellare');
+    box = { x: it.x - 1, y: it.by - it.fh * 0.98, w: it.w + 2, h: it.fh * 1.3 };
+  }
+  const col = sampleColors(r, box);
+  snap();
+  p.ann.push({ id: nid(), t: 'cover', ...box, bg: col.bg, tx: box.x, by: box.y, text: '', size: 11, font: 'H', bold: false, c: '#000000' });
+  drawAnn(r);
 }
 
 /* ---------- firme e timbri ---------- */
@@ -535,10 +557,11 @@ function userBox(bvp, a, m = 1) {
 
 // Toglie dal contenuto della pagina le scritte che iniziano dentro i riquadri coperti.
 // Restituisce il nuovo contenuto e quante scritte ha tolto.
-function pulisci(src, boxes) {
+function pulisci(src, boxes, isImage = () => false) {
   const n = src.length, WS = ' \t\r\n\f\0', DL = '()<>[]{}/%';
   let i = 0, ops = [], ctm = [1, 0, 0, 1, 0, 0], tlm = [1, 0, 0, 1, 0, 0], tl = 0, known = false, inside = false;
-  const st = [], cuts = [];
+  const st = [], cuts = [], tolte = new Set(), tenute = new Set(); let bi = -1;
+  const dentro = () => { const q = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => [x * ctm[0] + y * ctm[2] + ctm[4], x * ctm[1] + y * ctm[3] + ctm[5]]); const b = [Math.min(...q.map(v => v[0])), Math.min(...q.map(v => v[1])), Math.max(...q.map(v => v[0])), Math.max(...q.map(v => v[1]))]; return boxes.some(c => b[0] >= c[0] && b[1] >= c[1] && b[2] <= c[2] && b[3] <= c[3]); };
   const skipStr = () => { let d = 1; i++; while (i < n && d) { const c = src[i]; if (c === '\\') i += 2; else { if (c === '(') d++; else if (c === ')') d--; i++; } } };
   const nums = k => ops.slice(-k).map(o => o.v || 0);
   const show = (s, e, rep) => {
@@ -555,7 +578,7 @@ function pulisci(src, boxes) {
     if (c === '<' && src[i + 1] === '<') { let d = 0; do { if (src.startsWith('<<', i)) { d++; i += 2; } else if (src.startsWith('>>', i)) { d--; i += 2; } else if (src[i] === '(') skipStr(); else i++; } while (d && i < n); ops.push({ s: start }); continue; }
     if (c === '<') { const e = src.indexOf('>', i); i = e < 0 ? n : e + 1; ops.push({ s: start }); continue; }
     if (c === '[') { let d = 0; do { const ch = src[i]; if (ch === '(') skipStr(); else if (ch === '<' && src[i + 1] !== '<') { const e = src.indexOf('>', i); i = e < 0 ? n : e + 1; } else { if (ch === '[') d++; else if (ch === ']') d--; i++; } } while (d && i < n); ops.push({ s: start }); continue; }
-    if (c === '/') { i++; while (i < n && !WS.includes(src[i]) && !DL.includes(src[i])) i++; ops.push({ s: start }); continue; }
+    if (c === '/') { i++; while (i < n && !WS.includes(src[i]) && !DL.includes(src[i])) i++; ops.push({ s: start, name: src.slice(start + 1, i) }); continue; }
     if (DL.includes(c)) { i++; continue; }
     while (i < n && !WS.includes(src[i]) && !DL.includes(src[i])) i++;
     const tok = src.slice(start, i);
@@ -573,12 +596,15 @@ function pulisci(src, boxes) {
       case 'Tj': case 'TJ': if (ops.length) show(ops[ops.length - 1].s, i, ''); break;
       case "'": tlm = mm([1, 0, 0, 1, 0, -tl], tlm); known = true; if (ops.length) show(ops[ops.length - 1].s, i, 'T*'); break;
       case '"': { tlm = mm([1, 0, 0, 1, 0, -tl], tlm); known = true; if (ops.length >= 3) { const [aw, ac] = nums(3); show(ops[ops.length - 3].s, i, `${aw} Tw ${ac} Tc T*`); } break; }
-      case 'ID': { const m = /[\s]EI(?=[\s]|$)/g; m.lastIndex = i; const r = m.exec(src); i = r ? r.index + 3 : n; break; }
+      case 'BI': bi = start; break;
+      case 'ID': { const m = /[\s]EI(?=[\s]|$)/g; m.lastIndex = i; const r = m.exec(src); i = r ? r.index + 3 : n; if (bi >= 0 && dentro()) cuts.push([bi, i, '']); bi = -1; break; }
+      case 'Do': { const o = ops[ops.length - 1]; if (o && o.name != null && isImage(o.name)) { if (dentro()) { cuts.push([o.s, i, '']); tolte.add(o.name); } else tenute.add(o.name); } break; }
     }
     ops = [];
   }
+  cuts.sort((a, b) => a[0] - b[0]);
   for (let k = cuts.length - 1; k >= 0; k--) { const [s, e, rep] = cuts[k]; src = src.slice(0, s) + rep + ' '.repeat(Math.max(0, e - s - rep.length)) + src.slice(e); }
-  return { s: src, n: cuts.length };
+  return { s: src, n: cuts.length, immagini: [...tolte].filter(x => !tenute.has(x)) };
 }
 const latin1 = u => { let s = ''; for (let i = 0; i < u.length; i += 8192) s += String.fromCharCode.apply(null, u.subarray(i, i + 8192)); return s; };
 const unlatin1 = s => { const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255; return u; };
@@ -602,8 +628,16 @@ function cancellaSotto(node, boxes) {
     let s = '';
     for (const r of refs) { const st = ctx.lookup(r); if (!(st instanceof L.PDFRawStream)) throw new Error('contenuto non leggibile'); s += latin1(L.decodePDFRawStream(st).decode()) + '\n'; }
     if (s.includes('/ActualText')) throw new Error('testo alternativo presente');
-    const r = pulisci(s, boxes);
-    if (r.n) { node.set(L.PDFName.of('Contents'), ctx.register(ctx.flateStream(unlatin1(r.s)))); refs.forEach(x => ctx.delete(x)); if (extra) ctx.delete(extra); }
+    const N = L.PDFName.of, res = node.Resources(), xo = res ? res.lookup(N('XObject')) : null;
+    const isImage = name => { try { const o = xo instanceof L.PDFDict ? xo.lookup(N(name)) : null; return o instanceof L.PDFStream && o.dict.lookup(N('Subtype')) === N('Image'); } catch { return false; } };
+    const r = pulisci(s, boxes, isImage);
+    if (r.n) { node.set(N('Contents'), ctx.register(ctx.flateStream(unlatin1(r.s)))); refs.forEach(x => ctx.delete(x)); if (extra) ctx.delete(extra); }
+    if (r.immagini.length) { // le immagini cancellate vanno tolte anche dall'elenco delle risorse della pagina (copiato, perché può essere condiviso con altre pagine)
+      const res2 = ctx.obj({}), xo2 = ctx.obj({});
+      for (const [k, v] of res.entries()) res2.set(k, v);
+      for (const [k, v] of xo.entries()) if (!r.immagini.some(nm => N(nm) === k)) xo2.set(k, v);
+      res2.set(N('XObject'), xo2); node.set(N('Resources'), res2);
+    }
   }
   const an = node.Annots();
   if (an) for (let k = an.size() - 1; k >= 0; k--) {
@@ -641,25 +675,32 @@ function compila(doc, vals, appiattisci) {
 }
 const haCampi = doc => { try { const af = doc.catalog.getAcroForm(); return !!af && af.getAllFields().length > 0; } catch { return false; } };
 
-// Pagine in cui una copertura passa sopra un'immagine (es. scansioni): lì l'unico modo sicuro è rifare la pagina come immagine
-async function conImmaginiSotto(pages) {
-  const out = [], O = pdfjsLib.OPS;
+// C'è un'immagine che tocca una copertura? Con «tolleraDentro», quelle interamente dentro il riquadro (e non annidate) non contano: verranno tolte dal file.
+async function immagineSotto(proxy, boxes, tolleraDentro) {
+  const O = pdfjsLib.OPS;
   const IMG = new Set([O.paintImageXObject, O.paintInlineImageXObject, O.paintImageMaskXObject, O.paintImageXObjectRepeat, O.paintImageMaskXObjectRepeat, O.paintImageMaskXObjectGroup, O.paintInlineImageXObjectGroup].filter(x => x != null));
+  const ol = await proxy.getOperatorList(); let m = [1, 0, 0, 1, 0, 0], depth = 0; const st = [];
+  for (let i = 0; i < ol.fnArray.length; i++) {
+    const fn = ol.fnArray[i], a = ol.argsArray[i];
+    if (fn === O.save) st.push(m); else if (fn === O.restore) m = st.pop() || m;
+    else if (fn === O.transform) m = mm(a, m);
+    else if (fn === O.paintFormXObjectBegin) { st.push(m); depth++; if (a && a[0]) m = mm(a[0], m); }
+    else if (fn === O.paintFormXObjectEnd) { m = st.pop() || m; depth--; }
+    else if (IMG.has(fn)) {
+      const q = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]]);
+      const b = [Math.min(...q.map(v => v[0])), Math.min(...q.map(v => v[1])), Math.max(...q.map(v => v[0])), Math.max(...q.map(v => v[1]))];
+      for (const c of boxes) { if (!hitBox(b, c)) continue; if (tolleraDentro && depth === 0 && b[0] >= c[0] && b[1] >= c[1] && b[2] <= c[2] && b[3] <= c[3]) continue; return true; }
+    }
+  }
+  return false;
+}
+// Pagine in cui una copertura taglia un'immagine (es. scansioni): lì l'unico modo sicuro è rifare la pagina come immagine
+async function conImmaginiSotto(pages) {
+  const out = [];
   for (const p of pages) {
     const cs = covers(p); if (!cs.length) continue;
-    try {
-      const proxy = await S.sources[p.src].pdf.getPage(p.idx + 1), bvp = proxy.getViewport({ scale: 1 }), boxes = cs.map(a => userBox(bvp, a, 0));
-      const ol = await proxy.getOperatorList(); let m = [1, 0, 0, 1, 0, 0]; const st = []; let hit = false;
-      for (let i = 0; i < ol.fnArray.length && !hit; i++) {
-        const fn = ol.fnArray[i], a = ol.argsArray[i];
-        if (fn === O.save) st.push(m); else if (fn === O.restore) m = st.pop() || m;
-        else if (fn === O.transform) m = mm(a, m);
-        else if (fn === O.paintFormXObjectBegin) { st.push(m); if (a && a[0]) m = mm(a[0], m); }
-        else if (fn === O.paintFormXObjectEnd) m = st.pop() || m;
-        else if (IMG.has(fn)) { const q = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]]); const b = [Math.min(...q.map(v => v[0])), Math.min(...q.map(v => v[1])), Math.max(...q.map(v => v[0])), Math.max(...q.map(v => v[1]))]; hit = boxes.some(c => hitBox(b, c)); }
-      }
-      if (hit) out.push(p.id);
-    } catch (e) { console.warn(e); out.push(p.id); }
+    try { const proxy = await S.sources[p.src].pdf.getPage(p.idx + 1), bvp = proxy.getViewport({ scale: 1 }); if (await immagineSotto(proxy, cs.map(a => userBox(bvp, a)), true)) out.push(p.id); }
+    catch (e) { console.warn(e); out.push(p.id); }
   }
   return out;
 }
@@ -765,7 +806,8 @@ async function verifica(bytes, pages, forza) {
       const dopo = dopoTutte.filter(it => !mie.some(([x, y]) => Math.abs(it.x - x) < 1.5 && Math.abs(it.by - y) < 1.5));
       const rimasto = dopo.some(it => cs.some(a => sotto(it, a)));
       const fuori = dopo.filter(it => !cs.some(a => sotto(it, a)));
-      if (rimasto || nch(fuori) < nch(prima)) bad.push(p.id);
+      const bvp = po.getViewport({ scale: 1 }), img = await immagineSotto(pn, cs.map(a => userBox(bvp, a, 0)), false).catch(() => true);
+      if (rimasto || img || nch(fuori) < nch(prima)) bad.push(p.id);
     }
   } finally { doc.destroy(); }
   return bad;
@@ -906,6 +948,7 @@ function ui() {
   } else if (S.tool === 'hl') o.append(hint('Trascina sopra il testo'), ...sw(['#ffe14d', '#9be37a', '#ffa3c4', '#8fd3ff'], S.hlColor, c => S.hlColor = c));
   else if (S.tool === 'ink') o.append(...sw(['#1a3fb0', '#000000', '#c62828'], S.inkColor, c => S.inkColor = c), ...[['Fine', 1], ['Medio', 1.6], ['Grosso', 3]].map(([l, w]) => { const b = ob(l, () => { S.inkW = w; ui(); }); if (S.inkW === w) b.style.borderColor = 'var(--ink)'; return b; }));
   else if (S.tool === 'cover') o.append(hint('Tocca il testo da correggere, oppure trascina un riquadro sopra'));
+  else if (S.tool === 'erase') o.append(hint('Tocca una scritta o un’aggiunta per cancellarla, oppure trascina un riquadro sulla zona da cancellare'));
   else if (S.tool === 'text') o.append(hint('Tocca il punto dove scrivere'));
   else if (S.tool === 'note') o.append(hint('Tocca il punto dove mettere la nota'));
   else if (S.tool === 'place') o.append(hint(S.pending && S.pending.kind === 'firme' ? 'Tocca il punto dove mettere la firma' : 'Tocca il punto dove mettere il timbro'), ob('Annulla', () => setTool('mano')));

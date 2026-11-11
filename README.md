@@ -9,6 +9,7 @@ I documenti restano sul dispositivo: l'app non carica nulla online e non richied
 - **Compila e firma**: campi dei moduli, firma disegnata, timbri da immagine. Firme e timbri restano salvati sul singolo dispositivo.
 - **Pagine**: unisci più PDF, estrai, ruota, elimina, riordina.
 - **Correggi**: tocca una riga di testo per coprirla e riscriverla (stesso punto e stessa dimensione), oppure trascina un riquadro.
+- **Cancella**: tocca una scritta o un'aggiunta per toglierla, oppure trascina un riquadro sulla zona da cancellare (testo, immagini, loghi, firme).
 - **Salva / Condividi**: crea sempre una copia «nome - modificato.pdf»; l'originale non viene toccato.
 - **Da altre app** (Android, con l'app installata da Chrome): menu «Condividi» di WhatsApp, Gmail ecc. → Editor PDF.
 

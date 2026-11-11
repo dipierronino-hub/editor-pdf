@@ -1,5 +1,5 @@
 // Editor PDF — funzionamento offline e ricezione dei PDF condivisi da altre app.
-const CACHE = 'editor-pdf-shell-v2';
+const CACHE = 'editor-pdf-shell-v3';
 const CONDIVISI = 'editor-pdf-condivisi';
 const SHELL = ['./', 'index.html', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'lib/pdf.min.mjs', 'lib/pdf.worker.min.mjs', 'lib/pdf-lib.min.js', 'lib/qpdf.js', 'lib/qpdf.wasm'];
