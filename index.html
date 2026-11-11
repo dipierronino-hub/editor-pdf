@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Editor PDF</title>
+<meta name="theme-color" content="#16323f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+:root{
+  --ink:#14232b; --bar:#16323f; --bar2:#1f4353; --paper:#eef1f2; --line:#cfd8dc;
+  --acc:#e2572b; --acc-d:#bf4520; --ok:#1c7c54; --mute:#5c6f78; --card:#fff;
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--paper);color:var(--ink);overscroll-behavior:none}
+body{display:flex;flex-direction:column;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+#top{background:var(--bar);color:#fff;display:flex;align-items:center;gap:6px;padding:8px 10px;padding-top:calc(8px + env(safe-area-inset-top))}
+#top .name{flex:1;min-width:0;font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#top .name small{display:block;font-weight:400;font-size:11px;opacity:.7}
+.tb{padding:9px 12px;border-radius:8px;background:var(--bar2);color:#fff;font-size:14px;font-weight:600;white-space:nowrap}
+.tb.pri{background:var(--acc)}
+.tb.pri:active{background:var(--acc-d)}
+.tb:disabled{opacity:.4}
+
+#tools{background:#fff;border-bottom:1px solid var(--line);display:flex;gap:4px;padding:6px 8px;overflow-x:auto;scrollbar-width:none;flex:none}
+#tools::-webkit-scrollbar{display:none}
+.tool{padding:8px 11px;border-radius:8px;font-size:14px;white-space:nowrap;color:var(--ink);border:1px solid transparent}
+.tool[aria-pressed="true"]{background:var(--bar);color:#fff}
+.tool:disabled{opacity:.35}
+.sep{flex:none;width:1px;background:var(--line);margin:4px 3px}
+
+#opts{background:#f7f9fa;border-bottom:1px solid var(--line);display:none;gap:8px;align-items:center;padding:6px 10px;min-height:43px;overflow-x:auto;font-size:13px;color:var(--mute);flex:none}
+#opts.on{display:flex}
+#opts .hint{white-space:nowrap}
+.sw{flex:none;width:28px;height:28px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px var(--line)}
+.sw[aria-pressed="true"]{box-shadow:0 0 0 2px var(--ink)}
+.ob{flex:none;padding:6px 10px;border-radius:7px;background:#fff;border:1px solid var(--line);color:var(--ink);font-size:13px;white-space:nowrap}
+.ob.del{color:#b3261e;border-color:#e7b6b2}
+
+#viewer{flex:1;overflow:auto;position:relative;touch-action:pan-x pan-y}
+#pages{padding:10px 8px 80px;display:flex;flex-direction:column;align-items:center;gap:10px;min-width:min-content;transform-origin:0 0}
+.page{position:relative;background:#fff;box-shadow:0 1px 4px rgba(20,35,43,.25);flex:none}
+.page canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.page svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.page svg.draw{pointer-events:all;touch-action:none;cursor:crosshair}
+.page .num{position:absolute;right:6px;bottom:-9px;font-size:10px;color:var(--mute);background:var(--paper);padding:0 5px;border-radius:6px;pointer-events:none;z-index:2}
+.ann{pointer-events:all;cursor:pointer}
+svg.draw .ann{pointer-events:none}
+.ann.sel,.ann.sel *{touch-action:none;cursor:move}
+.selbox{fill:none;stroke:#1a73e8;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;stroke-width:1.5;pointer-events:none}
+.handle{fill:#1a73e8;stroke:#fff;vector-effect:non-scaling-stroke;stroke-width:2;pointer-events:all;touch-action:none;cursor:nwse-resize}
+.hit{fill:#ffb300;opacity:.45;pointer-events:none}
+.forms{position:absolute;inset:0;pointer-events:none}
+.forms>*{position:absolute;pointer-events:auto;margin:0;border:1px solid #7aa7d8;background:rgba(225,238,255,.92);color:#000;padding:0 2px;font-family:Arial,Helvetica,sans-serif;border-radius:0;min-width:0}
+.forms textarea{resize:none}
+.forms input[type=checkbox],.forms input[type=radio]{padding:0;accent-color:var(--bar)}
+body.drawing .forms>*{pointer-events:none}
+
+#empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center}
+#empty h1{margin:0;font-size:26px;letter-spacing:-.01em}
+#empty p{margin:0;color:var(--mute);max-width:34ch;line-height:1.45}
+#empty .big{padding:16px 28px;border-radius:12px;background:var(--acc);color:#fff;font-size:18px;font-weight:700}
+#empty .ver{font-size:12px;color:var(--mute);margin-top:10px}
+body.drop #viewer{outline:3px dashed var(--acc);outline-offset:-8px}
+
+#zoom{position:fixed;right:10px;bottom:calc(12px + env(safe-area-inset-bottom));display:none;gap:4px;background:var(--bar);border-radius:10px;padding:4px;box-shadow:0 2px 8px rgba(0,0,0,.3);z-index:5}
+#zoom.on{display:flex}
+#zoom button{width:38px;height:36px;border-radius:7px;color:#fff;font-size:18px;font-weight:700}
+#zoom button.w{width:auto;padding:0 10px;font-size:12px;font-weight:600}
+#zoom button:active{background:var(--bar2)}
+#pginfo{position:fixed;left:10px;bottom:calc(14px + env(safe-area-inset-bottom));background:rgba(20,35,43,.8);color:#fff;font-size:12px;padding:6px 10px;border-radius:8px;display:none;z-index:5}
+#pginfo.on{display:block}
+
+.sheet{position:fixed;inset:0;background:rgba(20,35,43,.5);display:none;align-items:flex-end;justify-content:center;z-index:20}
+.sheet.on{display:flex}
+.sheet .box{background:#fff;width:100%;max-width:760px;max-height:92%;border-radius:16px 16px 0 0;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom)}
+@media(min-width:780px){.sheet{align-items:center}.sheet .box{border-radius:16px;max-height:86%}}
+.sheet header{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.sheet header h2{flex:1;margin:0;font-size:17px}
+.sheet .x{padding:8px 12px;border-radius:8px;background:var(--paper);font-weight:600;font-size:14px}
+.sheet .body{padding:12px 14px;overflow:auto;flex:1}
+.sheet .foot{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line)}
+.btn{padding:11px 14px;border-radius:9px;background:var(--paper);font-weight:600;font-size:14px;border:1px solid var(--line)}
+.btn.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
+.btn.del{color:#b3261e}
+.btn:disabled{opacity:.4}
+.grow{flex:1}
+
+#thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:12px}
+.th{position:relative;border:2px solid var(--line);border-radius:8px;padding:6px 6px 22px;background:#fafbfb;text-align:center}
+.th canvas{max-width:100%;max-height:150px;box-shadow:0 0 0 1px var(--line);background:#fff}
+.th span{position:absolute;left:0;right:0;bottom:3px;font-size:12px;color:var(--mute)}
+.th[aria-pressed="true"]{border-color:var(--acc);background:#fff2ec}
+.th[aria-pressed="true"] span{color:var(--acc-d);font-weight:700}
+
+label.f{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink)}
+.row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
+.row>div{flex:1;min-width:110px}
+.chk{display:flex;align-items:center;gap:8px;font-size:15px;padding:10px 0}
+.chk input{width:20px;height:20px}
+.res{display:block;width:100%;text-align:left;padding:10px;border-bottom:1px solid var(--line);font-size:14px}
+.res b{color:var(--acc-d)}
+.res small{color:var(--mute);display:block}
+#sigpad{width:100%;height:200px;border:2px dashed var(--line);border-radius:10px;touch-action:none;background:#fff;display:block}
+.lib{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+.lib .it{position:relative;border:1px solid var(--line);border-radius:9px;padding:6px;background:#fff}
+.lib .it img{height:54px;max-width:150px;display:block;object-fit:contain}
+.lib .it .rm{position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:50%;background:#b3261e;color:#fff;font-size:13px;line-height:24px}
+.note{font-size:13px;color:var(--mute);line-height:1.45}
+#toast{position:fixed;left:50%;bottom:calc(64px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;max-width:90vw;display:none;z-index:40;text-align:center}
+#toast.on{display:block}
+#busy{position:fixed;inset:0;background:rgba(255,255,255,.7);display:none;align-items:center;justify-content:center;z-index:50;font-weight:600}
+#busy.on{display:flex}
+@media(prefers-reduced-motion:no-preference){.sheet .box{animation:up .18s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}}}
+</style>
+</head>
+<body>
+<div id="top">
+  <button class="tb" id="bOpen">Apri</button>
+  <div class="name" id="docName">Editor PDF</div>
+  <button class="tb" id="bShare" disabled>Condividi</button>
+  <button class="tb pri" id="bSave" disabled>Salva</button>
+</div>
+
+<div id="tools" role="toolbar" aria-label="Strumenti">
+  <button class="tool" data-tool="mano" aria-pressed="true">Scorri</button>
+  <button class="tool" data-tool="hl">Evidenzia</button>
+  <button class="tool" data-tool="text">Testo</button>
+  <button class="tool" data-tool="note">Nota</button>
+  <button class="tool" data-tool="ink">Disegna</button>
+  <button class="tool" data-tool="cover">Correggi</button>
+  <button class="tool" id="bSign">Firma</button>
+  <button class="tool" id="bStamp">Timbro</button>
+  <span class="sep"></span>
+  <button class="tool" id="bUndo" disabled>Annulla</button>
+  <button class="tool" id="bRedo" disabled>Ripeti</button>
+  <span class="sep"></span>
+  <button class="tool" id="bPages">Pagine</button>
+  <button class="tool" id="bFind">Cerca</button>
+</div>
+<div id="opts"></div>
+
+<div id="viewer">
+  <div id="pages"></div>
+  <div id="empty">
+    <h1>Editor PDF</h1>
+    <p>Apri un PDF per leggerlo, annotarlo, firmarlo, riordinare le pagine o correggere un dato.</p>
+    <button class="big" id="bOpen2">Apri PDF</button>
+    <p class="note">I documenti restano su questo dispositivo: non vengono caricati online.</p>
+    <div class="ver" id="ver"></div>
+  </div>
+</div>
+
+<div id="pginfo"></div>
+<div id="zoom">
+  <button id="zOut" aria-label="Riduci">−</button>
+  <button id="zFit" class="w">Adatta</button>
+  <button id="zIn" aria-label="Ingrandisci">+</button>
+</div>
+
+<input type="file" id="fOpen" accept="application/pdf,.pdf" multiple hidden>
+<input type="file" id="fAdd" accept="application/pdf,.pdf" multiple hidden>
+<input type="file" id="fImg" accept="image/*" hidden>
+
+<!-- Pagine -->
+<div class="sheet" id="shPages"><div class="box">
+  <header><h2>Pagine</h2><button class="x" data-close>Chiudi</button></header>
+  <div class="body">
+    <p class="note" style="margin-top:0">Tocca le pagine per selezionarle, poi scegli cosa fare.</p>
+    <div id="thumbs"></div>
+  </div>
+  <div class="foot">
+    <button class="btn" id="pAll">Tutte</button>
+    <button class="btn" id="pLeft">◀ Sposta</button>
+    <button class="btn" id="pRight">Sposta ▶</button>
+    <button class="btn" id="pRot">Ruota</button>
+    <button class="btn del" id="pDel">Elimina</button>
+    <button class="btn" id="pExt">Estrai in nuovo PDF</button>
+    <button class="btn" id="pGo">Vai alla pagina</button>
+    <button class="btn pri" id="pAdd">Aggiungi PDF</button>
+  </div>
+</div></div>
+
+<!-- Cerca -->
+<div class="sheet" id="shFind"><div class="box">
+  <header><h2>Cerca nel documento</h2><button class="x" data-close>Chiudi</button></header>
+  <div class="body">
+    <div class="row"><div><input class="in" id="q" type="search" placeholder="Parola o numero da cercare" enterkeyhint="search"></div><button class="btn pri" id="qGo" style="flex:none">Cerca</button></div>
+    <div id="qRes" style="margin-top:8px"></div>
+  </div>
+</div></div>
+
+<!-- Testo -->
+<div class="sheet" id="shText"><div class="box">
+  <header><h2 id="txTitle">Testo</h2><button class="x" data-close>Annulla</button></header>
+  <div class="body">
+    <p class="note" id="txNote" style="margin-top:0"></p>
+    <textarea class="in" id="txVal" rows="3"></textarea>
+    <div class="row">
+      <div><label class="f" for="txSize">Dimensione</label><input class="in" id="txSize" type="number" min="4" max="120" step="0.5"></div>
+      <div><label class="f" for="txFont">Carattere</label><select class="in" id="txFont"><option value="H">Arial / Helvetica</option><option value="T">Times</option><option value="C">Courier</option></select></div>
+    </div>
+    <label class="chk"><input type="checkbox" id="txBold"> Grassetto</label>
+    <div class="row" style="align-items:center"><span class="note">Colore</span>
+      <button class="sw" data-c="#000000" style="background:#000"></button>
+      <button class="sw" data-c="#1a3fb0" style="background:#1a3fb0"></button>
+      <button class="sw" data-c="#c62828" style="background:#c62828"></button>
+      <button class="sw" data-c="#1c7c54" style="background:#1c7c54"></button>
+    </div>
+  </div>
+  <div class="foot"><span class="grow"></span><button class="btn pri" id="txOk">Conferma</button></div>
+</div></div>
+
+<!-- Firma -->
+<div class="sheet" id="shSign"><div class="box">
+  <header><h2>Firma</h2><button class="x" data-close>Chiudi</button></header>
+  <div class="body">
+    <p class="note" style="margin-top:0">Scegli una firma salvata, oppure disegnane una nuova qui sotto.</p>
+    <div class="lib" id="sigLib"></div>
+    <label class="f">Nuova firma</label>
+    <canvas id="sigpad"></canvas>
+  </div>
+  <div class="foot"><button class="btn" id="sigClr">Cancella</button><span class="grow"></span><button class="btn pri" id="sigOk">Salva e usa</button></div>
+</div></div>
+
+<!-- Timbro -->
+<div class="sheet" id="shStamp"><div class="box">
+  <header><h2>Timbri e immagini</h2><button class="x" data-close>Chiudi</button></header>
+  <div class="body">
+    <p class="note" style="margin-top:0">Scegli un timbro salvato, oppure carica un'immagine (per esempio il timbro «copia conforme» o un logo).</p>
+    <div class="lib" id="stLib"></div>
+  </div>
+  <div class="foot"><span class="grow"></span><button class="btn pri" id="stAdd">Carica immagine</button></div>
+</div></div>
+
+<div id="toast" role="status"></div>
+<div id="busy">Un momento…</div>
+
+<script src="lib/pdf-lib.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
