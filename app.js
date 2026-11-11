@@ -2,7 +2,7 @@
 // I documenti restano sul dispositivo: nessun caricamento online.
 import * as pdfjsLib from './lib/pdf.min.mjs';
 
-const VERSIONE = '2026-11-11a';
+const VERSIONE = '2026-11-12a';
 const LIB = new URL('./lib/', import.meta.url).href;
 pdfjsLib.GlobalWorkerOptions.workerSrc = LIB + 'pdf.worker.min.mjs';
 const { PDFDocument, StandardFonts, rgb, degrees, BlendMode, LineCapStyle } = window.PDFLib;
@@ -36,9 +36,24 @@ function closeSheets() { $$('.sheet.on').forEach(s => s.classList.remove('on'));
 $$('.sheet').forEach(s => s.addEventListener('click', e => { if (e.target === s && performance.now() - sheetT < 500) return; if (e.target === s || e.target.closest('[data-close]')) closeSheets(); }));
 
 /* ---------- apertura ---------- */
+// PDF protetti: li sblocco con qpdf (caricato solo quando serve), così restano testo vero e non immagini
+const cifrato = u => { const k = [47, 69, 110, 99, 114, 121, 112, 116]; outer: for (let i = u.length - k.length; i >= 0; i--) { for (let j = 0; j < k.length; j++) if (u[i + j] !== k[j]) continue outer; return true; } return false; };
+let qpdfPronto;
+function caricaQpdf() {
+  return qpdfPronto || (qpdfPronto = new Promise((ok, ko) => { const s = document.createElement('script'); s.src = LIB + 'qpdf.js'; s.onload = () => ok(window.Module); s.onerror = () => { qpdfPronto = null; ko(new Error('qpdf non disponibile')); }; document.head.append(s); }));
+}
+async function sblocca(bytes, password) {
+  const crea = await caricaQpdf(), q = await crea({ locateFile: () => LIB + 'qpdf.wasm', noInitialRun: true, print: () => { }, printErr: () => { } });
+  q.FS.writeFile('/in.pdf', bytes);
+  try { q.callMain(['--decrypt', '--password=' + (password || ''), '/in.pdf', '/out.pdf']); } catch (e) { /* qpdf termina con un'uscita: il risultato si controlla sotto */ }
+  const out = q.FS.readFile('/out.pdf'); if (!out || out.length < 100) throw new Error('sblocco non riuscito');
+  return new Uint8Array(out);
+}
+
 async function loadSource(file) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bytes = new Uint8Array(await file.arrayBuffer());
   let password;
+  if (cifrato(bytes)) { const libero = await sblocca(bytes, '').catch(e => { console.warn(e); return null; }); if (libero) bytes = libero; }
   const open = () => pdfjsLib.getDocument({ data: bytes.slice(), password, cMapUrl: LIB + 'cmaps/', cMapPacked: true, standardFontDataUrl: LIB + 'standard_fonts/' }).promise;
   let pdf;
   try { pdf = await open(); }
@@ -46,6 +61,8 @@ async function loadSource(file) {
     if (e && e.name === 'PasswordException') {
       password = window.prompt('Questo PDF è protetto. Inserisci la password per aprirlo:');
       if (password == null) throw new Error('Apertura annullata');
+      const libero = await sblocca(bytes, password).catch(err => { console.warn(err); return null; });
+      if (libero) { bytes = libero; password = undefined; }
       pdf = await open();
     } else throw e;
   }
@@ -506,51 +523,188 @@ async function buildForms(r, proxy) {
 const hexRgb = h => { const n = parseInt(h.slice(1), 16); return rgb((n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255); };
 const FONT = { H: StandardFonts.Helvetica, HB: StandardFonts.HelveticaBold, T: StandardFonts.TimesRoman, TB: StandardFonts.TimesRomanBold, C: StandardFonts.Courier, CB: StandardFonts.CourierBold };
 
-async function buildPdf(pages) {
-  const out = await PDFDocument.create(); out.setProducer('Editor PDF'); out.setCreator('Editor PDF');
-  const fonts = {}, sets = {}, libs = new Map(), imgs = {};
+// --- matrici PDF [a b c d e f]: mm(a,b) = prima a, poi b
+const mm = (a, b) => [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3], a[4] * b[0] + a[5] * b[2] + b[4], a[4] * b[1] + a[5] * b[3] + b[5]];
+const covers = p => p.ann.filter(a => a.t === 'cover');
+const hitBox = (b, c) => Math.min(b[2], c[2]) - Math.max(b[0], c[0]) > 0 && Math.min(b[3], c[3]) - Math.max(b[1], c[1]) > 0;
+// riquadro della copertura nello spazio del PDF
+function userBox(bvp, a, m = 1) {
+  const pts = [[a.x, a.y], [a.x + a.w, a.y], [a.x, a.y + a.h], [a.x + a.w, a.y + a.h]].map(q => bvp.convertToPdfPoint(q[0], q[1]));
+  return [Math.min(...pts.map(q => q[0])) - m, Math.min(...pts.map(q => q[1])) - m, Math.max(...pts.map(q => q[0])) + m, Math.max(...pts.map(q => q[1])) + m];
+}
+
+// Toglie dal contenuto della pagina le scritte che iniziano dentro i riquadri coperti.
+// Restituisce il nuovo contenuto e quante scritte ha tolto.
+function pulisci(src, boxes) {
+  const n = src.length, WS = ' \t\r\n\f\0', DL = '()<>[]{}/%';
+  let i = 0, ops = [], ctm = [1, 0, 0, 1, 0, 0], tlm = [1, 0, 0, 1, 0, 0], tl = 0, known = false, inside = false;
+  const st = [], cuts = [];
+  const skipStr = () => { let d = 1; i++; while (i < n && d) { const c = src[i]; if (c === '\\') i += 2; else { if (c === '(') d++; else if (c === ')') d--; i++; } } };
+  const nums = k => ops.slice(-k).map(o => o.v || 0);
+  const show = (s, e, rep) => {
+    let ins;
+    if (known) { const m = mm(tlm, ctm); ins = boxes.some(b => m[4] >= b[0] && m[4] <= b[2] && m[5] >= b[1] && m[5] <= b[3]); inside = ins; known = false; } else ins = inside;
+    if (ins) cuts.push([s, e, rep]);
+  };
+  while (i < n) {
+    while (i < n && WS.includes(src[i])) i++;
+    if (i >= n) break;
+    const c = src[i], start = i;
+    if (c === '%') { while (i < n && src[i] !== '\n' && src[i] !== '\r') i++; continue; }
+    if (c === '(') { skipStr(); ops.push({ s: start }); continue; }
+    if (c === '<' && src[i + 1] === '<') { let d = 0; do { if (src.startsWith('<<', i)) { d++; i += 2; } else if (src.startsWith('>>', i)) { d--; i += 2; } else if (src[i] === '(') skipStr(); else i++; } while (d && i < n); ops.push({ s: start }); continue; }
+    if (c === '<') { const e = src.indexOf('>', i); i = e < 0 ? n : e + 1; ops.push({ s: start }); continue; }
+    if (c === '[') { let d = 0; do { const ch = src[i]; if (ch === '(') skipStr(); else if (ch === '<' && src[i + 1] !== '<') { const e = src.indexOf('>', i); i = e < 0 ? n : e + 1; } else { if (ch === '[') d++; else if (ch === ']') d--; i++; } } while (d && i < n); ops.push({ s: start }); continue; }
+    if (c === '/') { i++; while (i < n && !WS.includes(src[i]) && !DL.includes(src[i])) i++; ops.push({ s: start }); continue; }
+    if (DL.includes(c)) { i++; continue; }
+    while (i < n && !WS.includes(src[i]) && !DL.includes(src[i])) i++;
+    const tok = src.slice(start, i);
+    if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(tok)) { ops.push({ s: start, v: parseFloat(tok) }); continue; }
+    switch (tok) {
+      case 'q': st.push(ctm); break;
+      case 'Q': ctm = st.pop() || ctm; break;
+      case 'cm': ctm = mm(nums(6), ctm); break;
+      case 'BT': tlm = [1, 0, 0, 1, 0, 0]; known = true; inside = false; break;
+      case 'Td': { const [x, y] = nums(2); tlm = mm([1, 0, 0, 1, x, y], tlm); known = true; break; }
+      case 'TD': { const [x, y] = nums(2); tl = -y; tlm = mm([1, 0, 0, 1, x, y], tlm); known = true; break; }
+      case 'TL': tl = nums(1)[0]; break;
+      case 'Tm': tlm = nums(6); known = true; break;
+      case 'T*': tlm = mm([1, 0, 0, 1, 0, -tl], tlm); known = true; break;
+      case 'Tj': case 'TJ': if (ops.length) show(ops[ops.length - 1].s, i, ''); break;
+      case "'": tlm = mm([1, 0, 0, 1, 0, -tl], tlm); known = true; if (ops.length) show(ops[ops.length - 1].s, i, 'T*'); break;
+      case '"': { tlm = mm([1, 0, 0, 1, 0, -tl], tlm); known = true; if (ops.length >= 3) { const [aw, ac] = nums(3); show(ops[ops.length - 3].s, i, `${aw} Tw ${ac} Tc T*`); } break; }
+      case 'ID': { const m = /[\s]EI(?=[\s]|$)/g; m.lastIndex = i; const r = m.exec(src); i = r ? r.index + 3 : n; break; }
+    }
+    ops = [];
+  }
+  for (let k = cuts.length - 1; k >= 0; k--) { const [s, e, rep] = cuts[k]; src = src.slice(0, s) + rep + ' '.repeat(Math.max(0, e - s - rep.length)) + src.slice(e); }
+  return { s: src, n: cuts.length };
+}
+const latin1 = u => { let s = ''; for (let i = 0; i < u.length; i += 8192) s += String.fromCharCode.apply(null, u.subarray(i, i + 8192)); return s; };
+const unlatin1 = s => { const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255; return u; };
+
+function contentRefs(node) {
+  const L = window.PDFLib, c = node.get(L.PDFName.of('Contents')); if (!c) return { refs: [], extra: null };
+  const o = c instanceof L.PDFRef ? node.context.lookup(c) : c;
+  if (o instanceof L.PDFArray) return { refs: o.asArray().filter(r => r instanceof L.PDFRef), extra: c instanceof L.PDFRef ? c : null };
+  return { refs: c instanceof L.PDFRef ? [c] : [], extra: null };
+}
+// Svuota una pagina che non finisce nel file (eliminata o sostituita da un'immagine), così il suo contenuto non resta nascosto nel PDF
+function svuota(node) {
+  const L = window.PDFLib, { refs, extra } = contentRefs(node);
+  refs.forEach(r => node.context.delete(r)); if (extra) node.context.delete(extra);
+  for (const k of ['Contents', 'Resources', 'Annots', 'Thumb']) node.delete(L.PDFName.of(k));
+}
+// Cancella dalla pagina il testo e le annotazioni che stanno sotto le coperture
+function cancellaSotto(node, boxes) {
+  const L = window.PDFLib, ctx = node.context, { refs, extra } = contentRefs(node);
+  if (refs.length) {
+    let s = '';
+    for (const r of refs) { const st = ctx.lookup(r); if (!(st instanceof L.PDFRawStream)) throw new Error('contenuto non leggibile'); s += latin1(L.decodePDFRawStream(st).decode()) + '\n'; }
+    if (s.includes('/ActualText')) throw new Error('testo alternativo presente');
+    const r = pulisci(s, boxes);
+    if (r.n) { node.set(L.PDFName.of('Contents'), ctx.register(ctx.flateStream(unlatin1(r.s)))); refs.forEach(x => ctx.delete(x)); if (extra) ctx.delete(extra); }
+  }
+  const an = node.Annots();
+  if (an) for (let k = an.size() - 1; k >= 0; k--) {
+    const d = an.lookup(k), rc = d instanceof L.PDFDict ? d.lookup(L.PDFName.of('Rect')) : null;
+    if (rc instanceof L.PDFArray && rc.size() === 4) { const v = rc.asArray().map(x => (x.asNumber ? x.asNumber() : 0)); const b = [Math.min(v[0], v[2]), Math.min(v[1], v[3]), Math.max(v[0], v[2]), Math.max(v[1], v[3])]; if (boxes.some(c => hitBox(b, c))) an.remove(k); }
+  }
+}
+// Elimina dal file gli oggetti non più collegati a nulla (pagine tolte, immagini e scritte sostituite)
+function ripulisci(doc) {
+  const L = window.PDFLib, ctx = doc.context, seen = new Set(), stack = [];
+  const push = o => { if (o instanceof L.PDFRef) { if (!seen.has(o.tag)) { seen.add(o.tag); const t = ctx.lookup(o); if (t) stack.push(t); } } else if (o) stack.push(o); };
+  for (const k of ['Root', 'Info', 'Encrypt']) if (ctx.trailerInfo[k]) push(ctx.trailerInfo[k]);
+  while (stack.length) {
+    const o = stack.pop();
+    if (o instanceof L.PDFDict) for (const [, v] of o.entries()) push(v);
+    else if (o instanceof L.PDFArray) for (const v of o.asArray()) push(v);
+    else if (o instanceof L.PDFStream) for (const [, v] of o.dict.entries()) push(v);
+  }
+  for (const [ref] of ctx.enumerateIndirectObjects()) if (!seen.has(ref.tag)) ctx.delete(ref);
+}
+function compila(doc, vals, appiattisci) {
+  const keys = Object.keys(vals || {}); if (!keys.length) return;
+  const L = window.PDFLib, form = doc.getForm();
+  for (const k of keys) {
+    const v = vals[k];
+    try {
+      const f = form.getField(k);
+      if (f instanceof L.PDFTextField) f.setText(v ? String(v).replace(/[^\x09\x0a\x0d\x20-\x7e\xa0-\xff€’‘“”–—…•]/g, '?') : '');
+      else if (f instanceof L.PDFCheckBox) v ? f.check() : f.uncheck();
+      else if (f instanceof L.PDFRadioGroup) f.select(String(v));
+      else if (f instanceof L.PDFDropdown || f instanceof L.PDFOptionList) v ? f.select(String(v)) : f.clear();
+    } catch (e) { console.warn('campo', k, e); }
+  }
+  if (appiattisci) { try { form.flatten(); } catch (e) { console.warn(e); try { form.updateFieldAppearances(); } catch { } } }
+}
+const haCampi = doc => { try { const af = doc.catalog.getAcroForm(); return !!af && af.getAllFields().length > 0; } catch { return false; } };
+
+// Pagine in cui una copertura passa sopra un'immagine (es. scansioni): lì l'unico modo sicuro è rifare la pagina come immagine
+async function conImmaginiSotto(pages) {
+  const out = [], O = pdfjsLib.OPS;
+  const IMG = new Set([O.paintImageXObject, O.paintInlineImageXObject, O.paintImageMaskXObject, O.paintImageXObjectRepeat, O.paintImageMaskXObjectRepeat, O.paintImageMaskXObjectGroup, O.paintInlineImageXObjectGroup].filter(x => x != null));
+  for (const p of pages) {
+    const cs = covers(p); if (!cs.length) continue;
+    try {
+      const proxy = await S.sources[p.src].pdf.getPage(p.idx + 1), bvp = proxy.getViewport({ scale: 1 }), boxes = cs.map(a => userBox(bvp, a, 0));
+      const ol = await proxy.getOperatorList(); let m = [1, 0, 0, 1, 0, 0]; const st = []; let hit = false;
+      for (let i = 0; i < ol.fnArray.length && !hit; i++) {
+        const fn = ol.fnArray[i], a = ol.argsArray[i];
+        if (fn === O.save) st.push(m); else if (fn === O.restore) m = st.pop() || m;
+        else if (fn === O.transform) m = mm(a, m);
+        else if (fn === O.paintFormXObjectBegin) { st.push(m); if (a && a[0]) m = mm(a[0], m); }
+        else if (fn === O.paintFormXObjectEnd) m = st.pop() || m;
+        else if (IMG.has(fn)) { const q = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]]); const b = [Math.min(...q.map(v => v[0])), Math.min(...q.map(v => v[1])), Math.max(...q.map(v => v[0])), Math.max(...q.map(v => v[1]))]; hit = boxes.some(c => hitBox(b, c)); }
+      }
+      if (hit) out.push(p.id);
+    } catch (e) { console.warn(e); out.push(p.id); }
+  }
+  return out;
+}
+
+async function buildPdf(pages, forza = new Set()) {
+  const fonts = {}, sets = {}, libs = new Map(), imgs = {}, riprova = [];
   let raster = 0;
+  const used = [...new Set(pages.map(p => p.src))];
+  for (const si of used) { let d = null; try { d = await PDFDocument.load(S.sources[si].bytes); } catch (e) { console.warn('pdf-lib non legge il file, salvo come immagini', e); } libs.set(si, d); }
+  // il documento «base» resta l'originale (così moduli, segnalibri e proprietà si conservano); gli altri vengono copiati dentro
+  let host = used.find(si => libs.get(si) && haCampi(libs.get(si))); if (host === undefined) host = used.find(si => libs.get(si));
+  const out = host !== undefined ? libs.get(host) : await PDFDocument.create();
+  out.setProducer('Editor PDF');
+  const orig = new Map();
+  for (const si of used) {
+    const d = libs.get(si); if (!d) continue;
+    const pp = d.getPages(); orig.set(si, pp);
+    const tieni = new Set(pages.filter(p => p.src === si && !forza.has(p.id)).map(p => p.idx));
+    pp.forEach((pg, i) => { if (!tieni.has(i)) svuota(pg.node); });
+    compila(d, S.sources[si].form, si !== host);
+  }
+  if (host !== undefined) while (out.getPageCount() > 0) out.removePage(0);
+
   const font = async a => { const k = (a.font || 'H') + (a.bold ? 'B' : ''); if (!fonts[k]) { fonts[k] = await out.embedFont(FONT[k] || FONT.H); sets[k] = new Set(fonts[k].getCharacterSet()); } return [fonts[k], sets[k]]; };
   const ok = (set, s) => [...String(s).replace(/\t/g, '    ')].map(ch => set.has(ch.codePointAt(0)) ? ch : '?').join('');
-  const getLib = async si => {
-    if (libs.has(si)) return libs.get(si);
-    const src = S.sources[si]; let doc = null;
-    try {
-      doc = await PDFDocument.load(src.bytes);
-      const keys = Object.keys(src.form);
-      if (keys.length) {
-        const form = doc.getForm(), L = window.PDFLib;
-        for (const k of keys) {
-          const v = src.form[k];
-          try {
-            const f = form.getField(k);
-            if (f instanceof L.PDFTextField) f.setText(v ? String(v).replace(/[^\x09\x0a\x0d\x20-\x7e\xa0-\xff€’‘“”–—…•]/g, '?') : '');
-            else if (f instanceof L.PDFCheckBox) v ? f.check() : f.uncheck();
-            else if (f instanceof L.PDFRadioGroup) f.select(String(v));
-            else if (f instanceof L.PDFDropdown || f instanceof L.PDFOptionList) v ? f.select(String(v)) : f.clear();
-          } catch (e) { console.warn('campo', k, e); }
-        }
-        try { form.flatten(); } catch (e) { console.warn(e); try { form.updateFieldAppearances(); } catch { } }
-      }
-    } catch (e) { console.warn('pdf-lib non legge il file, salvo come immagini', e); doc = null; }
-    libs.set(si, doc); return doc;
-  };
 
   for (const p of pages) {
     const src = S.sources[p.src], proxy = await src.pdf.getPage(p.idx + 1), bvp = proxy.getViewport({ scale: 1 });
-    const lib = await getLib(p.src);
+    const lib = libs.get(p.src), cs = covers(p);
     let page, toPdf;
-    if (lib) {
-      const [cp] = await out.copyPages(lib, [p.idx]); page = out.addPage(cp);
+    if (lib && !forza.has(p.id)) {
+      const srcPage = orig.get(p.src)[p.idx];
+      if (cs.length) { try { cancellaSotto(srcPage.node, cs.map(a => userBox(bvp, a))); } catch (e) { console.warn('cancellazione non riuscita, rifaccio la pagina come immagine', e); riprova.push(p.id); } }
+      if (p.src === host) page = out.addPage(srcPage);
+      else { const [cp] = await out.copyPages(lib, [p.idx]); page = out.addPage(cp); }
       page.setRotation(degrees((proxy.rotate + p.rot) % 360));
       toPdf = (x, y) => bvp.convertToPdfPoint(x, y);
     } else {
       raster++;
-      let k = 2; if (p.w * p.h * k * k > 8e6) k = Math.sqrt(8e6 / (p.w * p.h));
+      let k = 2.5; if (p.w * p.h * k * k > 10e6) k = Math.sqrt(10e6 / (p.w * p.h));
       const vp = proxy.getViewport({ scale: k }), c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
       const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
       await proxy.render({ canvasContext: cx, viewport: vp }).promise;
-      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', .9)); c.width = 0;
+      for (const a of cs) { cx.fillStyle = a.bg; cx.fillRect(Math.floor(a.x * k) - 1, Math.floor(a.y * k) - 1, Math.ceil(a.w * k) + 2, Math.ceil(a.h * k) + 2); } // copertura impressa nell'immagine
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', .92)); c.width = 0;
       const jpg = await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
       page = out.addPage([p.w, p.h]); page.drawImage(jpg, { x: 0, y: 0, width: p.w, height: p.h });
       page.setRotation(degrees(p.rot));
@@ -582,16 +736,59 @@ async function buildPdf(pages) {
       }
     }
   }
-  return { bytes: await out.save(), raster };
+  ripulisci(out);
+  return { bytes: await out.save(), raster, riprova };
+}
+
+// Controllo finale: riapre il PDF prodotto e verifica che sotto le coperture non sia rimasto testo e che fuori non manchi nulla
+function voci(tc, vp) {
+  const out = [];
+  for (const i of tc.items) {
+    if (!i.str || !i.str.trim()) continue;
+    const m = pdfjsLib.Util.transform(vp.transform, i.transform), fh = Math.hypot(m[2], m[3]);
+    out.push({ str: i.str, x: m[4], by: m[5], w: i.width, fh, flat: m[0] > 0 && Math.abs(m[1]) < 0.02 * Math.abs(m[0]) });
+  }
+  return out;
+}
+const sotto = (it, a) => it.flat ? (Math.min(it.x + it.w, a.x + a.w) - Math.max(it.x, a.x) > 1 && it.by >= a.y - .5 && it.by <= a.y + a.h + .5) : (it.x >= a.x && it.x <= a.x + a.w && it.by >= a.y && it.by <= a.y + a.h);
+const nch = list => list.reduce((t, it) => t + it.str.replace(/\s/g, '').length, 0);
+async function verifica(bytes, pages, forza) {
+  const todo = pages.map((p, i) => [p, i]).filter(([p]) => covers(p).length && !forza.has(p.id)); if (!todo.length) return [];
+  const bad = [], doc = await pdfjsLib.getDocument({ data: bytes.slice(), cMapUrl: LIB + 'cmaps/', cMapPacked: true, standardFontDataUrl: LIB + 'standard_fonts/' }).promise;
+  try {
+    for (const [p, i] of todo) {
+      const cs = covers(p), src = S.sources[p.src], po = await src.pdf.getPage(p.idx + 1);
+      const prima = voci(await po.getTextContent(), po.getViewport({ scale: 1 })).filter(it => !cs.some(a => sotto(it, a)));
+      const pn = await doc.getPage(i + 1), dopoTutte = voci(await pn.getTextContent(), pn.getViewport({ scale: 1, rotation: po.rotate }));
+      const mie = [];
+      for (const a of p.ann) if (a.text && (a.t === 'cover' || a.t === 'text')) lines(a).forEach((l, k) => mie.push([a.t === 'cover' ? a.tx : a.x, (a.t === 'cover' ? a.by : a.y + a.size * 0.92) + k * a.size * 1.2]));
+      const dopo = dopoTutte.filter(it => !mie.some(([x, y]) => Math.abs(it.x - x) < 1.5 && Math.abs(it.by - y) < 1.5));
+      const rimasto = dopo.some(it => cs.some(a => sotto(it, a)));
+      const fuori = dopo.filter(it => !cs.some(a => sotto(it, a)));
+      if (rimasto || nch(fuori) < nch(prima)) bad.push(p.id);
+    }
+  } finally { doc.destroy(); }
+  return bad;
 }
 
 const outName = suff => (S.name || 'documento').replace(/ - (modificato|estratto)$/i, '') + ' - ' + suff + '.pdf';
+async function crea(pages) {
+  const forza = new Set(await conImmaginiSotto(pages)); let res;
+  for (let giro = 0; giro < 3; giro++) {
+    res = await buildPdf(pages, forza);
+    const bad = [...res.riprova, ...await verifica(res.bytes, pages, forza)].filter(id => !forza.has(id));
+    if (!bad.length) break;
+    bad.forEach(id => forza.add(id));
+  }
+  return { ...res, immagine: forza.size };
+}
 async function makeFile(pages, suff) {
   busy(true, 'Preparo il PDF…');
   try {
     await new Promise(r => setTimeout(r, 30));
-    const { bytes, raster } = await buildPdf(pages);
-    if (raster) toast('Alcune pagine erano protette: sono state salvate come immagini', 5000);
+    const { bytes, raster, immagine } = await crea(pages);
+    if (immagine) toast(immagine === 1 ? 'Per cancellare davvero il testo coperto, una pagina è stata salvata come immagine' : 'Per cancellare davvero il testo coperto, ' + immagine + ' pagine sono state salvate come immagine', 6000);
+    else if (raster) toast('Non sono riuscito a sbloccare il PDF: le pagine sono state salvate come immagini', 6000);
     return new File([bytes], outName(suff), { type: 'application/pdf' });
   } catch (e) { console.error(e); toast('Non sono riuscito a creare il PDF: ' + (e.message || e), 6000); return null; }
   finally { busy(false); }
@@ -767,4 +964,4 @@ if ('launchQueue' in window) window.launchQueue.setConsumer(async lp => { if (!l
 })();
 
 // per le prove automatiche
-window.__editor = { S, openFiles, buildPdf, setTool, els };
+window.__editor = { S, openFiles, buildPdf, crea, setTool, els };

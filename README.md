@@ -12,17 +12,23 @@ I documenti restano sul dispositivo: l'app non carica nulla online e non richied
 - **Salva / Condividi**: crea sempre una copia «nome - modificato.pdf»; l'originale non viene toccato.
 - **Da altre app** (Android, con l'app installata da Chrome): menu «Condividi» di WhatsApp, Gmail ecc. → Editor PDF.
 
-## Limiti da conoscere
-- «Correggi» copre il testo vecchio e scrive sopra: va bene per importi, date e righe brevi, non per riscrivere paragrafi.
-  Il testo coperto resta dentro il file (non è una cancellazione sicura di dati riservati).
-- I PDF protetti vengono salvati come immagini: il testo non è più selezionabile.
-- I moduli compilati vengono «appiattiti» nel file salvato: i campi non sono più modificabili.
+## Garanzie e limiti
+- **Correggi cancella davvero**: il testo coperto viene tolto dal file, non solo nascosto. Dopo il salvataggio l'app riapre il PDF e
+  controlla che sotto le coperture non sia rimasto nulla e che il resto del testo ci sia ancora. Se la cancellazione «pulita» non è
+  possibile (scansioni, copertura che taglia una riga a metà, PDF con struttura particolare), quella pagina viene salvata come immagine
+  con la copertura impressa.
+- **Pagine eliminate**: il loro contenuto viene rimosso dal file, non resta nascosto.
+- **PDF protetti**: vengono sbloccati con qpdf (serve la password solo se il PDF la chiede per aprirsi) e restano testo vero.
+- **Moduli**: i campi compilati restano modificabili nel file salvato (per il documento principale; quelli di eventuali PDF aggiunti
+  in coda vengono fissati).
+- «Correggi» resta un «copri e riscrivi»: adatto a importi, date e righe brevi, non a riscrivere paragrafi.
+- La cancellazione riguarda testo, immagini e annotazioni della pagina. Proprietà del documento (titolo, autore) e segnalibri non vengono toccati.
 
 ## Com'è fatta
 - `index.html`, `app.js`: l'app (nessun passaggio di compilazione).
 - `sw.js`: funzionamento offline e ricezione dei file condivisi. A ogni rilascio aumentare `CACHE` (`-shell-vN`).
 - `manifest.webmanifest`, `icons/`: installazione come app.
-- `lib/`: pdf.js 4.10.38 (visualizzazione) e pdf-lib 1.17.1 (scrittura), copiate nel repository.
+- `lib/`: pdf.js 4.10.38 (visualizzazione), pdf-lib 1.17.1 (scrittura), qpdf-wasm 0.3.1 (sblocco dei PDF protetti), copiate nel repository.
 - Versione mostrata nella schermata iniziale: costante `VERSIONE` in `app.js`.
 
 Pubblicazione: GitHub Pages dal ramo `gh-pages` (https://dipierronino-hub.github.io/editor-pdf/). Dopo ogni modifica su `main`: `git push origin main:gh-pages`.
