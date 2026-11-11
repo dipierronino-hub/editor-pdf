@@ -1,8 +1,8 @@
-// Editor PDF — visualizza, annota, firma, riorganizza e corregge PDF nel browser.
+// ninetto-pdf — visualizza, annota, firma, riorganizza e corregge PDF nel browser.
 // I documenti restano sul dispositivo: nessun caricamento online.
 import * as pdfjsLib from './lib/pdf.min.mjs';
 
-const VERSIONE = '2026-11-12b';
+const VERSIONE = '2026-11-12c';
 const LIB = new URL('./lib/', import.meta.url).href;
 pdfjsLib.GlobalWorkerOptions.workerSrc = LIB + 'pdf.worker.min.mjs';
 const { PDFDocument, StandardFonts, rgb, degrees, BlendMode, LineCapStyle } = window.PDFLib;
@@ -18,7 +18,7 @@ const viewer = $('#viewer'), pagesEl = $('#pages');
 const S = {
   sources: [], pages: [], assets: {}, scale: 1, tool: 'mano', sel: null, pending: null,
   undo: [], redo: [], dirty: false, name: '', hits: {},
-  hlColor: '#ffe14d', inkColor: '#1a3fb0', inkW: 1.6,
+  hlColor: '#ffe14d', inkColor: '#1a3fb0', inkW: 1.6, whiteColor: '#ffffff',
   tx: { size: 11, font: 'H', bold: false, c: '#000000' },
 };
 let seq = 1;
@@ -75,7 +75,7 @@ async function loadSource(file) {
   return out;
 }
 
-async function openFiles(files, append) {
+async function openFiles(files, append, pos) {
   files = [...files].filter(f => /pdf/i.test(f.type) || /\.pdf$/i.test(f.name));
   if (!files.length) return toast('Scegli un file PDF');
   if (!append && S.dirty && !window.confirm('Ci sono modifiche non salvate. Aprire un altro PDF?')) return;
@@ -87,7 +87,7 @@ async function openFiles(files, append) {
       catch (e) { console.error(e); toast('Non riesco ad aprire «' + f.name + '»'); }
     }
     if (!nuove.length) return;
-    if (append) { snap(); S.pages.push(...nuove); }
+    if (append) { snap(); if (pos == null || pos > S.pages.length) pos = S.pages.length; S.pages.splice(pos, 0, ...nuove); }
     else {
       S.pages = nuove; S.undo = []; S.redo = []; S.dirty = files.length > 1; S.sel = null; S.hits = {};
       S.name = files[0].name.replace(/\.pdf$/i, '');
@@ -95,7 +95,7 @@ async function openFiles(files, append) {
     }
     build(append);
     if (!append) { fit(); viewer.scrollTop = 0; }
-    else toast(nuove.length + (nuove.length === 1 ? ' pagina aggiunta' : ' pagine aggiunte') + ' in fondo');
+    else toast(nuove.length + (nuove.length === 1 ? ' pagina aggiunta' : ' pagine aggiunte') + (pos >= S.pages.length - nuove.length ? ' in fondo' : ' dopo la pagina ' + pos));
   } finally { busy(false); }
 }
 
@@ -236,6 +236,16 @@ function annEl(a) {
   else if (a.t === 'ink') e.append(sv('polyline', { points: a.pts.map(p => p.join(',')).join(' '), fill: 'none', stroke: a.c, 'stroke-width': a.lw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
   else if (a.t === 'img') e.append(sv('image', { href: S.assets[a.asset] || '', x: a.x, y: a.y, width: a.w, height: a.h, preserveAspectRatio: 'none' }));
   else if (a.t === 'cover') { e.append(sv('rect', { x: a.x, y: a.y, width: a.w, height: a.h, fill: a.bg })); if (a.text) e.append(textEl(a, a.tx, a.by)); }
+  else if (a.t === 'stamp') {
+    // timbro: doppia cornice e scritta in grassetto, inclinati attorno al centro
+    const cx = a.x + a.w / 2, cy = a.y + a.h / 2, bw = a.h * 0.07, size = Math.min(a.h * 0.46, a.w * 0.84 / (textW({ size: 100, bold: true, font: 'H' }, a.text) / 100));
+    const g = sv('g', { transform: `rotate(${a.ang} ${cx} ${cy})`, opacity: .85 });
+    g.append(sv('rect', { x: a.x, y: a.y, width: a.w, height: a.h, fill: 'transparent' }),
+      sv('rect', { x: a.x + bw / 2, y: a.y + bw / 2, width: a.w - bw, height: a.h - bw, fill: 'none', stroke: a.c, 'stroke-width': bw }),
+      sv('rect', { x: a.x + bw * 2, y: a.y + bw * 2, width: a.w - bw * 4, height: a.h - bw * 4, fill: 'none', stroke: a.c, 'stroke-width': bw * 0.35 }));
+    const t = sv('text', { x: cx, y: cy + size * 0.35, 'text-anchor': 'middle', 'font-size': size, 'font-weight': 'bold', 'font-family': fontCss('H'), fill: a.c }); t.textContent = a.text; g.append(t);
+    e.append(g);
+  }
   else if (a.t === 'text') {
     if (a.bg) { const b = bbox(a); e.append(sv('rect', { x: b.x, y: b.y, width: b.w, height: b.h, fill: a.bg, stroke: '#d9b400', 'stroke-width': .5 })); }
     else { const b = bbox(a); e.append(sv('rect', { x: b.x, y: b.y, width: b.w, height: b.h, fill: 'transparent' })); }
@@ -253,7 +263,12 @@ function drawAnn(r) {
       const el = g.querySelector(`[data-id="${a.id}"]`); el && el.classList.add('sel');
       const b = bbox(a);
       g.append(sv('rect', { class: 'selbox', x: b.x - 1, y: b.y - 1, width: b.w + 2, height: b.h + 2 }));
-      if (a.t === 'hl' || a.t === 'img' || a.t === 'cover') g.append(sv('circle', { class: 'handle', cx: b.x + b.w, cy: b.y + b.h, r: 8 / S.scale }));
+      const k = 1 / S.scale;
+      for (const c of ['nw', 'ne', 'sw', 'se']) g.append(sv('circle', { class: 'handle', 'data-c': c, cx: c[1] === 'w' ? b.x : b.x + b.w, cy: c[0] === 'n' ? b.y : b.y + b.h, r: 7 * k }));
+      const dx = b.x + b.w / 2, dy = b.y - 20 * k, x = sv('g', { class: 'delx' }); // ✕ rapida sopra l'oggetto
+      x.append(sv('circle', { cx: dx, cy: dy, r: 10 * k, fill: '#c62828', stroke: '#fff', 'stroke-width': 1.5 * k }),
+        sv('path', { d: `M${dx - 4 * k} ${dy - 4 * k}L${dx + 4 * k} ${dy + 4 * k}M${dx + 4 * k} ${dy - 4 * k}L${dx - 4 * k} ${dy + 4 * k}`, stroke: '#fff', 'stroke-width': 2 * k, 'stroke-linecap': 'round' }));
+      g.append(x);
     }
   }
 }
@@ -266,6 +281,19 @@ function select(pid, id) {
 const selAnn = () => { if (!S.sel) return null; const p = S.pages.find(p => p.id === S.sel.pid); return p ? p.ann.find(a => a.id === S.sel.id) : null; };
 
 /* ---------- annotazioni: gesti ---------- */
+// Ridimensiona dall'angolo trascinato tenendo fermo quello opposto. Immagini, timbri, testi e disegni mantengono le proporzioni.
+function ridimensiona(d, x, y) {
+  const a = d.a, a0 = d.a0, b0 = d.b0, c = d.c;
+  const ax = c[1] === 'w' ? b0.x + b0.w : b0.x, ay = c[0] === 'n' ? b0.y + b0.h : b0.y;
+  let nw = Math.abs(x - ax), nh = Math.abs(y - ay), k = 1;
+  if (a.t === 'hl' || a.t === 'cover') { nw = Math.max(nw, 6); nh = Math.max(nh, 4); }
+  else { k = Math.max(nw / b0.w, nh / b0.h, 12 / Math.max(b0.w, b0.h)); nw = b0.w * k; nh = b0.h * k; }
+  const nx = c[1] === 'w' ? ax - nw : ax, ny = c[0] === 'n' ? ay - nh : ay;
+  if (a.t === 'hl' || a.t === 'img' || a.t === 'stamp') { a.x = nx; a.y = ny; a.w = nw; a.h = nh; }
+  else if (a.t === 'cover') { a.x = nx; a.y = ny; a.w = nw; a.h = nh; a.tx = a0.tx + nx - b0.x; a.by = a0.by + ny - b0.y; }
+  else if (a.t === 'text') { const pad = a.bg ? 3 : 0; a.size = clamp(+(a0.size * k).toFixed(2), 4, 120); a.x = nx + pad; a.y = ny + pad; }
+  else if (a.t === 'ink') a.pts = a0.pts.map(([px, py]) => [+(nx + 2 * k + (px - b0.x - 2) * k).toFixed(2), +(ny + 2 * k + (py - b0.y - 2) * k).toFixed(2)]);
+}
 function pt(r, e) { const q = new DOMPoint(e.clientX, e.clientY).matrixTransform(r.g.getScreenCTM().inverse()); return [q.x, q.y]; }
 let drag = null;
 function cancelDrag() { if (drag && drag.tmp) drag.tmp.remove(); drag = null; }
@@ -275,17 +303,18 @@ function bindSvg(r) {
   svg.addEventListener('pointerdown', e => {
     if (e.button > 0 || drag) return;
     const [x, y] = pt(r, e), tool = S.tool;
+    if (e.target.closest('.delx')) { e.preventDefault(); delSel(); return; }
     if (e.target.classList.contains('handle')) {
       const a = selAnn(); if (!a) return;
-      drag = { k: 'resize', r, a, ratio: a.h / a.w, moved: false };
+      drag = { k: 'resize', r, a, c: e.target.dataset.c || 'se', b0: bbox(a), a0: JSON.parse(JSON.stringify(a)), moved: false };
     } else if (tool === 'mano') {
       const ae = e.target.closest('.ann'); if (!ae) return;
       const id = ae.dataset.id, was = S.sel && S.sel.id === id;
       if (!was) { select(r.p.id, id); if (e.pointerType !== 'mouse') return; }
       const a = r.p.ann.find(q => q.id === id);
       drag = { k: 'move', r, a, x, y, moved: false };
-    } else if (tool === 'hl' || tool === 'cover' || tool === 'erase') {
-      const tmp = sv('rect', { x, y, width: 0, height: 0, fill: tool === 'hl' ? S.hlColor : tool === 'erase' ? '#c62828' : '#1a73e8', opacity: .35 });
+    } else if (tool === 'hl' || tool === 'cover' || tool === 'erase' || tool === 'white') {
+      const tmp = sv('rect', { x, y, width: 0, height: 0, fill: tool === 'hl' ? S.hlColor : tool === 'erase' ? '#c62828' : tool === 'white' ? '#7a8a93' : '#1a73e8', opacity: .35 });
       r.g.append(tmp); drag = { k: 'rect', r, x, y, tmp, tool };
     } else if (tool === 'ink') {
       const tmp = sv('polyline', { fill: 'none', stroke: S.inkColor, 'stroke-width': S.inkW, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', points: `${x},${y}` });
@@ -306,7 +335,7 @@ function bindSvg(r) {
       drawAnn(r);
     } else if (d.k === 'resize') {
       if (!d.moved) { d.moved = true; snap(); }
-      const a = d.a; a.w = Math.max(6, x - a.x); a.h = a.t === 'img' ? a.w * d.ratio : Math.max(4, y - a.y);
+      ridimensiona(d, x, y);
       drawAnn(r);
     } else if (d.k === 'rect') {
       d.tmp.setAttribute('x', Math.min(x, d.x)); d.tmp.setAttribute('y', Math.min(y, d.y));
@@ -325,6 +354,11 @@ function bindSvg(r) {
       const box = { x: Math.min(x, d.x), y: Math.min(y, d.y), w: Math.abs(x - d.x), h: Math.abs(y - d.y) };
       const small = box.w * S.scale < 6 || box.h * S.scale < 6;
       if (d.tool === 'hl') { if (!small) { snap(); r.p.ann.push({ id: nid(), t: 'hl', ...box, c: S.hlColor }); drawAnn(r); } else toast('Trascina sopra il testo da evidenziare'); }
+      else if (d.tool === 'white') {
+        // bianchetto: rettangolo pieno (bianco o nero); resta selezionabile, spostabile e ridimensionabile finché non salvi
+        if (small) toast('Trascina un riquadro sulla parte da coprire');
+        else { snap(); r.p.ann.push({ id: nid(), t: 'cover', ...box, bg: S.whiteColor, tx: box.x, by: box.y, text: '', size: 11, font: 'H', bold: false, c: '#000000' }); drawAnn(r); }
+      }
       else if (d.tool === 'erase') cancella(r, small ? null : box, d.x, d.y);
       else correggi(r, small ? null : box, d.x, d.y);
     } else if (d.k === 'ink') {
@@ -338,7 +372,7 @@ function bindSvg(r) {
   svg.addEventListener('dblclick', e => { const ae = e.target.closest('.ann'); if (ae && S.tool === 'mano') { select(r.p.id, ae.dataset.id); modifica(); } });
 }
 viewer.addEventListener('pointerdown', e => {
-  if (S.tool !== 'mano' || e.target.closest('.ann,.handle,.forms>*')) return;
+  if (S.tool !== 'mano' || e.target.closest('.ann,.handle,.delx,.forms>*')) return;
   if (S.sel) select(null, null);
   if (Object.keys(S.hits).length) { const ids = Object.keys(S.hits); S.hits = {}; ids.forEach(id => { const r = els.get(id); r && drawAnn(r); }); }
 });
@@ -451,16 +485,53 @@ const store = {
   get(k) { try { return JSON.parse(localStorage.getItem('editorpdf.' + k) || '[]'); } catch { return []; } },
   set(k, v) { try { localStorage.setItem('editorpdf.' + k, JSON.stringify(v)); return true; } catch { toast('Memoria piena: elimina qualche firma o timbro salvato'); return false; } },
 };
+const MAX_FIRME = 3;
 function renderLib(kind, elId) {
-  const box = $('#' + elId), list = store.get(kind); box.textContent = '';
-  if (!list.length) { const n = document.createElement('p'); n.className = 'note'; n.textContent = kind === 'firme' ? 'Nessuna firma salvata su questo dispositivo.' : 'Nessun timbro salvato su questo dispositivo.'; box.append(n); return; }
+  const box = $('#' + elId), list = store.get(kind), firme = kind === 'firme'; box.textContent = '';
+  if (firme) $('#sigCount').textContent = list.length ? `Firme salvate: ${list.length} di ${MAX_FIRME}` : '';
+  if (!list.length) { const n = document.createElement('p'); n.className = 'note'; n.textContent = firme ? 'Nessuna firma salvata su questo dispositivo.' : 'Nessuna immagine salvata su questo dispositivo.'; box.append(n); return; }
   for (const it of list) {
     const d = document.createElement('div'); d.className = 'it';
-    const b = document.createElement('button'); const im = document.createElement('img'); im.src = it.d; im.alt = kind === 'firme' ? 'Firma salvata' : 'Timbro salvato'; b.append(im);
-    b.onclick = () => usaImg(it, kind);
-    const x = document.createElement('button'); x.className = 'rm'; x.textContent = '✕'; x.setAttribute('aria-label', 'Elimina');
+    const im = document.createElement('img'); im.src = it.d; im.alt = firme ? 'Firma salvata' : 'Timbro salvato';
+    const row = document.createElement('div'); row.className = 'itb';
+    const b = document.createElement('button'); b.className = 'btn pri sm'; b.textContent = 'Applica'; b.onclick = () => usaImg(it, kind);
+    const x = document.createElement('button'); x.className = 'btn del sm'; x.textContent = '🗑'; x.setAttribute('aria-label', 'Elimina');
     x.onclick = () => { store.set(kind, store.get(kind).filter(q => q.id !== it.id)); renderLib(kind, elId); };
-    d.append(b, x); box.append(d);
+    im.onclick = b.onclick; row.append(b, x); d.append(im, row); box.append(d);
+  }
+}
+
+/* ---------- timbri rapidi (vettoriali, con data del giorno) ---------- */
+const oggi = () => { const d = new Date(), z = n => String(n).padStart(2, '0'); return `${z(d.getDate())}/${z(d.getMonth() + 1)}/${d.getFullYear()}`; };
+const TIMBRI = [
+  { nome: 'PAGATO', testo: () => 'PAGATO IL ' + oggi(), c: '#1c7c54' },
+  { nome: 'PAGATO', testo: () => 'PAGATO IL ' + oggi(), c: '#c62828' },
+  { nome: 'COPIA CONFORME', testo: () => 'COPIA CONFORME', c: '#1a3fb0' },
+  { nome: 'APPROVATO', testo: () => 'APPROVATO', c: '#1c7c54' },
+  { nome: 'ANNULLATO', testo: () => 'ANNULLATO', c: '#c62828' },
+];
+// pagina al centro dello schermo e punto corrispondente (in coordinate della pagina)
+function paginaAttiva() {
+  const vb = viewer.getBoundingClientRect(), cx = vb.left + vb.width / 2, cy = vb.top + vb.height / 2;
+  let best = null, bd = 1e9;
+  for (const r of els.values()) { const b = r.el.getBoundingClientRect(), d = cy < b.top ? b.top - cy : cy > b.bottom ? cy - b.bottom : 0; if (d < bd) { bd = d; best = r; } }
+  if (!best) return null;
+  const q = new DOMPoint(cx, cy).matrixTransform(best.g.getScreenCTM().inverse());
+  return { r: best, x: clamp(q.x, 40, best.p.w - 40), y: clamp(q.y, 30, best.p.h - 30) };
+}
+function timbroRapido(t) {
+  const pa = paginaAttiva(); if (!pa) return;
+  const testo = t.testo(), h = 40, w = Math.min(Math.max(120, testo.length * 12.5), pa.r.p.w * 0.6);
+  closeSheets(); setTool('mano'); snap();
+  const a = { id: nid(), t: 'stamp', x: pa.x - w / 2, y: pa.y - h / 2, w, h, text: testo, c: t.c, ang: -8 };
+  pa.r.p.ann.push(a); select(pa.r.p.id, a.id);
+  toast('Timbro inserito: trascinalo dove serve');
+}
+function renderTimbri() {
+  const box = $('#qsLib'); box.textContent = '';
+  for (const t of TIMBRI) {
+    const b = document.createElement('button'); b.className = 'qs'; b.style.color = t.c; b.onclick = () => timbroRapido(t);
+    const s1 = document.createElement('span'); s1.textContent = t.testo(); b.append(s1); box.append(b);
   }
 }
 function usaImg(it, kind) {
@@ -482,15 +553,17 @@ pad.addEventListener('pointerup', () => { padDown = false; }); pad.addEventListe
 $('#sigClr').onclick = padReset;
 $('#sigOk').onclick = () => {
   if (!padDirty) return toast('Disegna prima la firma nel riquadro');
+  if (store.get('firme').length >= MAX_FIRME && !window.confirm('Hai già ' + MAX_FIRME + ' firme salvate. Uso questa firma solo per ora, senza salvarla?\n(Per salvarla, elimina prima una di quelle esistenti col cestino.)')) return;
   const d = pctx.getImageData(0, 0, pad.width, pad.height).data; let x0 = pad.width, y0 = pad.height, x1 = 0, y1 = 0;
   for (let y = 0; y < pad.height; y++) for (let x = 0; x < pad.width; x++) if (d[(y * pad.width + x) * 4 + 3] > 10) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
   const m = 6; x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(pad.width, x1 + m); y1 = Math.min(pad.height, y1 + m);
   const c = document.createElement('canvas'); c.width = x1 - x0; c.height = y1 - y0; c.getContext('2d').drawImage(pad, x0, y0, c.width, c.height, 0, 0, c.width, c.height);
   const it = { id: 'f' + Date.now().toString(36), d: c.toDataURL('image/png'), w: c.width, h: c.height };
-  store.set('firme', [...store.get('firme'), it]); usaImg(it, 'firme');
+  if (store.get('firme').length < MAX_FIRME) store.set('firme', [...store.get('firme'), it]);
+  usaImg(it, 'firme');
 };
 $('#bSign').onclick = () => { renderLib('firme', 'sigLib'); openSheet('shSign'); padReset(); };
-$('#bStamp').onclick = () => { renderLib('timbri', 'stLib'); openSheet('shStamp'); };
+$('#bStamp').onclick = () => { renderTimbri(); renderLib('timbri', 'stLib'); openSheet('shStamp'); };
 $('#stAdd').onclick = () => $('#fImg').click();
 $('#fImg').onchange = async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
@@ -713,7 +786,7 @@ async function buildPdf(pages, forza = new Set()) {
   // il documento «base» resta l'originale (così moduli, segnalibri e proprietà si conservano); gli altri vengono copiati dentro
   let host = used.find(si => libs.get(si) && haCampi(libs.get(si))); if (host === undefined) host = used.find(si => libs.get(si));
   const out = host !== undefined ? libs.get(host) : await PDFDocument.create();
-  out.setProducer('Editor PDF');
+  out.setProducer('ninetto-pdf');
   const orig = new Map();
   for (const si of used) {
     const d = libs.get(si); if (!d) continue;
@@ -765,6 +838,14 @@ async function buildPdf(pages, forza = new Set()) {
         const d = S.assets[a.asset]; if (!d) continue;
         if (!imgs[a.asset]) { const bin = Uint8Array.from(atob(d.split(',')[1]), ch => ch.charCodeAt(0)); imgs[a.asset] = d.startsWith('data:image/jpeg') ? await out.embedJpg(bin) : await out.embedPng(bin); }
         page.drawImage(imgs[a.asset], { ...fr(a.x, a.y + a.h), width: a.w, height: a.h });
+      } else if (a.t === 'stamp') {
+        // stesso disegno dello schermo: cornici e scritta ruotate attorno al centro del timbro
+        const cx = a.x + a.w / 2, cy = a.y + a.h / 2, th = a.ang * Math.PI / 180, col = hexRgb(a.c), bw = a.h * 0.07;
+        const F = (lx, ly) => { const f = fr(cx + lx * Math.cos(th) - ly * Math.sin(th), cy + lx * Math.sin(th) + ly * Math.cos(th)); return { x: f.x, y: f.y, rotate: degrees(f.rotate.angle - a.ang) }; };
+        page.drawRectangle({ ...F(-a.w / 2 + bw / 2, a.h / 2 - bw / 2), width: a.w - bw, height: a.h - bw, borderColor: col, borderWidth: bw, borderOpacity: .85 });
+        page.drawRectangle({ ...F(-a.w / 2 + bw * 2, a.h / 2 - bw * 2), width: a.w - bw * 4, height: a.h - bw * 4, borderColor: col, borderWidth: bw * 0.35, borderOpacity: .85 });
+        const [f, set] = await font({ font: 'H', bold: true }), t = ok(set, a.text), size = Math.min(a.h * 0.46, a.w * 0.84 / f.widthOfTextAtSize(t, 1)), tw = f.widthOfTextAtSize(t, size);
+        page.drawText(t, { ...F(-tw / 2, size * 0.35), size, font: f, color: col, opacity: .85 });
       } else if (a.t === 'cover') {
         page.drawRectangle({ ...fr(a.x, a.y + a.h), width: a.w, height: a.h, color: hexRgb(a.bg) });
         if (a.text) await drawLines(a, a.tx, a.by);
@@ -803,7 +884,8 @@ async function verifica(bytes, pages, forza) {
       const pn = await doc.getPage(i + 1), dopoTutte = voci(await pn.getTextContent(), pn.getViewport({ scale: 1, rotation: po.rotate }));
       const mie = [];
       for (const a of p.ann) if (a.text && (a.t === 'cover' || a.t === 'text')) lines(a).forEach((l, k) => mie.push([a.t === 'cover' ? a.tx : a.x, (a.t === 'cover' ? a.by : a.y + a.size * 0.92) + k * a.size * 1.2]));
-      const dopo = dopoTutte.filter(it => !mie.some(([x, y]) => Math.abs(it.x - x) < 1.5 && Math.abs(it.by - y) < 1.5));
+      const timbri = new Set(p.ann.filter(a => a.t === 'stamp').map(a => a.text));
+      const dopo = dopoTutte.filter(it => !timbri.has(it.str) && !mie.some(([x, y]) => Math.abs(it.x - x) < 1.5 && Math.abs(it.by - y) < 1.5));
       const rimasto = dopo.some(it => cs.some(a => sotto(it, a)));
       const fuori = dopo.filter(it => !cs.some(a => sotto(it, a)));
       const bvp = po.getViewport({ scale: 1 }), img = await immagineSotto(pn, cs.map(a => userBox(bvp, a, 0)), false).catch(() => true);
@@ -865,7 +947,8 @@ async function thumbs() {
     const c = document.createElement('canvas'); const [vw, vh] = viewDims(p); const k = Math.min(110 / vw, 150 / vh) * 1.5;
     c.width = Math.round(vw * k); c.height = Math.round(vh * k); c.style.width = c.width / 1.5 + 'px';
     const s = document.createElement('span'); s.textContent = i + 1;
-    b.append(c, s); b.onclick = () => { T.sel.has(p.id) ? T.sel.delete(p.id) : T.sel.add(p.id); b.setAttribute('aria-pressed', T.sel.has(p.id)); };
+    const gr = document.createElement('i'); gr.className = 'grip'; gr.textContent = '⠿'; gr.title = 'Trascina per spostare la pagina'; presa(gr, b);
+    b.dataset.id = p.id; b.append(c, s, gr); b.onclick = () => { T.sel.has(p.id) ? T.sel.delete(p.id) : T.sel.add(p.id); b.setAttribute('aria-pressed', T.sel.has(p.id)); };
     box.append(b); jobs.push([p, c, k]);
   });
   for (const [p, c, k] of jobs) {
@@ -873,9 +956,34 @@ async function thumbs() {
     try { const proxy = await S.sources[p.src].pdf.getPage(p.idx + 1); await proxy.render({ canvasContext: c.getContext('2d'), viewport: proxy.getViewport({ scale: k, rotation: (proxy.rotate + p.rot) % 360 }) }).promise; } catch { }
   }
 }
+// Riordino delle miniature: si trascina la maniglia ⠿ (mouse o dito) e la pagina prende posto dove la lasci
+function presa(gr, card) {
+  let on = false, finito = 0;
+  gr.addEventListener('click', e => e.stopPropagation());
+  card.addEventListener('click', e => { if (Date.now() - finito < 400) { e.stopPropagation(); e.preventDefault(); } }, true); // il rilascio non deve contare come «tocco» di selezione
+  const move = e => {
+    if (!on) return;
+    const sopra = document.elementsFromPoint(e.clientX, e.clientY).find(n => n.classList && n.classList.contains('th') && n !== card);
+    if (!sopra) return;
+    // la scheda trascinata non viene mai staccata dalla pagina (altrimenti il gesto si interrompe): si spostano le altre attorno a lei
+    const kids = [...card.parentNode.children], ci = kids.indexOf(card), si = kids.indexOf(sopra);
+    if (ci < si) card.before(...kids.slice(ci + 1, si + 1)); else card.after(...kids.slice(si, ci));
+  };
+  const fine = () => {
+    if (!on) return; on = false; finito = Date.now(); card.classList.remove('drag');
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', fine); window.removeEventListener('pointercancel', fine);
+    const ordine = [...card.parentNode.children].map(n => n.dataset.id);
+    if (ordine.some((id, i) => S.pages[i].id !== id)) { snap(); S.pages = ordine.map(id => S.pages.find(p => p.id === id)); build(true); }
+    [...card.parentNode.children].forEach((n, i) => { n.querySelector('span').textContent = i + 1; });
+  };
+  gr.addEventListener('pointerdown', e => {
+    on = true; card.classList.add('drag'); e.preventDefault(); e.stopPropagation();
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', fine); window.addEventListener('pointercancel', fine);
+  });
+}
 const need = () => { if (!T.sel.size) { toast('Seleziona prima una o più pagine'); return false; } return true; };
 $('#bPages').onclick = () => { T.sel.clear(); openSheet('shPages'); thumbs(); };
-$('#pAll').onclick = () => { if (T.sel.size === S.pages.length) T.sel.clear(); else S.pages.forEach(p => T.sel.add(p.id)); $$('#thumbs .th').forEach((b, i) => b.setAttribute('aria-pressed', T.sel.has(S.pages[i].id))); };
+$('#pAll').onclick = () => { if (T.sel.size === S.pages.length) T.sel.clear(); else S.pages.forEach(p => T.sel.add(p.id)); $$('#thumbs .th').forEach(b => b.setAttribute('aria-pressed', T.sel.has(b.dataset.id))); };
 $('#pRot').onclick = () => { if (!need()) return; snap(); S.pages.forEach(p => { if (T.sel.has(p.id)) p.rot = (p.rot + 90) % 360; }); build(true); thumbs(); };
 $('#pDel').onclick = () => { if (!need()) return; if (T.sel.size >= S.pages.length) return toast('Deve restare almeno una pagina'); snap(); S.pages = S.pages.filter(p => !T.sel.has(p.id)); S.sel = null; build(true); thumbs(); };
 $('#pLeft').onclick = () => { if (!need()) return; snap(); const a = S.pages; for (let i = 1; i < a.length; i++) if (T.sel.has(a[i].id) && !T.sel.has(a[i - 1].id)) [a[i - 1], a[i]] = [a[i], a[i - 1]]; build(true); thumbs(); };
@@ -883,7 +991,12 @@ $('#pRight').onclick = () => { if (!need()) return; snap(); const a = S.pages; f
 $('#pExt').onclick = async () => { if (!need()) return; const f = await makeFile(S.pages.filter(p => T.sel.has(p.id)), 'estratto'); if (f) { download(f); toast('Pagine salvate in «' + f.name + '»'); } };
 $('#pGo').onclick = () => { if (!need()) return; const p = S.pages.find(p => T.sel.has(p.id)); closeSheets(); goPage(p.id); };
 $('#pAdd').onclick = () => $('#fAdd').click();
-$('#fAdd').onchange = async e => { const fs = [...e.target.files]; e.target.value = ''; await openFiles(fs, true); if ($('#shPages').classList.contains('on')) thumbs(); };
+$('#fAdd').onchange = async e => {
+  const fs = [...e.target.files]; e.target.value = '';
+  // se è selezionata una pagina, il nuovo PDF entra subito dopo; altrimenti in fondo
+  let pos = null; if ($('#shPages').classList.contains('on') && T.sel.size) pos = Math.max(...S.pages.map((p, i) => T.sel.has(p.id) ? i : -1)) + 1;
+  await openFiles(fs, true, pos); if ($('#shPages').classList.contains('on')) thumbs();
+};
 
 /* ---------- cerca ---------- */
 async function cerca() {
@@ -938,16 +1051,17 @@ function ui() {
   $$('#tools [data-tool]').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === S.tool));
   $('#bSign').setAttribute('aria-pressed', S.tool === 'place' && S.pending && S.pending.kind === 'firme');
   $('#bStamp').setAttribute('aria-pressed', S.tool === 'place' && S.pending && S.pending.kind === 'timbri');
-  const nm = $('#docName'); nm.textContent = has ? S.name : 'Editor PDF';
+  const nm = $('#docName'); nm.textContent = has ? S.name : 'ninetto-pdf';
   if (has) { const sm = document.createElement('small'); sm.textContent = S.pages.length + (S.pages.length === 1 ? ' pagina' : ' pagine') + (S.dirty ? ' · modifiche da salvare' : ''); nm.append(sm); }
   const o = $('#opts'); o.textContent = ''; const a = selAnn();
   if (a) {
     const edit = a.t === 'text' || a.t === 'cover';
     if (edit) o.append(ob('Modifica', modifica), ob('A−', () => resizeText(-1)), ob('A+', () => resizeText(1)));
-    o.append(ob('Elimina', delSel, 'del'), hint(a.t === 'ink' ? 'Trascina per spostare' : 'Trascina per spostare' + (edit && a.t === 'text' ? '' : ', pallino blu per ridimensionare')));
+    o.append(ob('Elimina', delSel, 'del'), hint('Trascina per spostare · pallini agli angoli per ridimensionare · ✕ per eliminare'));
   } else if (S.tool === 'hl') o.append(hint('Trascina sopra il testo'), ...sw(['#ffe14d', '#9be37a', '#ffa3c4', '#8fd3ff'], S.hlColor, c => S.hlColor = c));
   else if (S.tool === 'ink') o.append(...sw(['#1a3fb0', '#000000', '#c62828'], S.inkColor, c => S.inkColor = c), ...[['Fine', 1], ['Medio', 1.6], ['Grosso', 3]].map(([l, w]) => { const b = ob(l, () => { S.inkW = w; ui(); }); if (S.inkW === w) b.style.borderColor = 'var(--ink)'; return b; }));
   else if (S.tool === 'cover') o.append(hint('Tocca il testo da correggere, oppure trascina un riquadro sopra'));
+  else if (S.tool === 'white') o.append(hint('Trascina un riquadro sulla parte da coprire. Colore:'), ...sw(['#ffffff', '#000000'], S.whiteColor, c => S.whiteColor = c));
   else if (S.tool === 'erase') o.append(hint('Tocca una scritta o un’aggiunta per cancellarla, oppure trascina un riquadro sulla zona da cancellare'));
   else if (S.tool === 'text') o.append(hint('Tocca il punto dove scrivere'));
   else if (S.tool === 'note') o.append(hint('Tocca il punto dove mettere la nota'));
@@ -983,10 +1097,17 @@ window.addEventListener('dragleave', () => { if (--dragN <= 0) { dragN = 0; docu
 window.addEventListener('dragover', e => e.preventDefault());
 window.addEventListener('drop', e => { e.preventDefault(); dragN = 0; document.body.classList.remove('drop'); if (e.dataTransfer.files.length) openFiles(e.dataTransfer.files, S.pages.length > 0 && e.shiftKey); });
 
-// zoom con due dita
-let pinch = null; const tdist = e => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-viewer.addEventListener('touchstart', e => { if (e.touches.length === 2 && S.pages.length) { cancelDrag(); pinch = { d: tdist(e), k: 1 }; } }, { passive: true });
-viewer.addEventListener('touchmove', e => { if (pinch && e.touches.length === 2) { e.preventDefault(); pinch.k = clamp(tdist(e) / pinch.d, 0.2 / S.scale, 6 / S.scale); pagesEl.style.transform = `scale(${pinch.k})`; } }, { passive: false });
+// due dita: zoom e spostamento della pagina; il tratto iniziato col primo dito viene annullato, così non restano segni
+let pinch = null;
+const tdist = e => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+const tmid = e => [(e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2];
+viewer.addEventListener('touchstart', e => { if (e.touches.length === 2 && S.pages.length) { cancelDrag(); const [mx, my] = tmid(e); pinch = { d: tdist(e), k: 1, mx, my }; } }, { passive: true });
+viewer.addEventListener('touchmove', e => {
+  if (!pinch || e.touches.length !== 2) return;
+  e.preventDefault();
+  const [mx, my] = tmid(e); viewer.scrollLeft -= mx - pinch.mx; viewer.scrollTop -= my - pinch.my; pinch.mx = mx; pinch.my = my;
+  pinch.k = clamp(tdist(e) / pinch.d, 0.2 / S.scale, 6 / S.scale); pagesEl.style.transform = Math.abs(pinch.k - 1) > 0.03 ? `scale(${pinch.k})` : '';
+}, { passive: false });
 const pinchEnd = () => { if (!pinch) return; const k = pinch.k; pinch = null; pagesEl.style.transform = ''; if (Math.abs(k - 1) > 0.03) setScale(S.scale * k); };
 viewer.addEventListener('touchend', pinchEnd); viewer.addEventListener('touchcancel', pinchEnd);
 window.addEventListener('resize', () => { if ($('#shSign').classList.contains('on')) return; pageInfo(); });
@@ -1007,4 +1128,4 @@ if ('launchQueue' in window) window.launchQueue.setConsumer(async lp => { if (!l
 })();
 
 // per le prove automatiche
-window.__editor = { S, openFiles, buildPdf, crea, setTool, els };
+window.__editor = { S, openFiles, buildPdf, crea, setTool, els, select };

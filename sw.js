@@ -1,8 +1,11 @@
-// Editor PDF — funzionamento offline e ricezione dei PDF condivisi da altre app.
-const CACHE = 'editor-pdf-shell-v3';
+// ninetto-pdf — funzionamento offline e ricezione dei PDF condivisi da altre app.
+const CACHE = 'editor-pdf-shell-v4';
 const CONDIVISI = 'editor-pdf-condivisi';
-const SHELL = ['./', 'index.html', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
-  'lib/pdf.min.mjs', 'lib/pdf.worker.min.mjs', 'lib/pdf-lib.min.js', 'lib/qpdf.js', 'lib/qpdf.wasm'];
+const SHELL = ['./', 'index.html', 'app.js', 'manifest.webmanifest',
+  'icons/icon.svg', 'icons/favicon-48.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
+  'lib/pdf.min.mjs', 'lib/pdf.worker.min.mjs', 'lib/pdf-lib.min.js', 'lib/qpdf.js', 'lib/qpdf.wasm',
+  // caratteri standard di pdf.js (servono per i PDF che non incorporano i font)
+  'lib/standard_fonts/FoxitDingbats.pfb', 'lib/standard_fonts/FoxitFixed.pfb', 'lib/standard_fonts/FoxitFixedBold.pfb', 'lib/standard_fonts/FoxitFixedBoldItalic.pfb', 'lib/standard_fonts/FoxitFixedItalic.pfb', 'lib/standard_fonts/FoxitSerif.pfb', 'lib/standard_fonts/FoxitSerifBold.pfb', 'lib/standard_fonts/FoxitSerifBoldItalic.pfb', 'lib/standard_fonts/FoxitSerifItalic.pfb', 'lib/standard_fonts/FoxitSymbol.pfb', 'lib/standard_fonts/LiberationSans-Bold.ttf', 'lib/standard_fonts/LiberationSans-BoldItalic.ttf', 'lib/standard_fonts/LiberationSans-Italic.ttf', 'lib/standard_fonts/LiberationSans-Regular.ttf'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {

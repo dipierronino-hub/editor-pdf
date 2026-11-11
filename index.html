@@ -3,15 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Editor PDF</title>
-<meta name="theme-color" content="#16323f">
+<title>ninetto-pdf</title>
+<meta name="theme-color" content="#1e1b4b">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icons/icon-192.png">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="alternate icon" type="image/png" href="icons/favicon-48.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
 :root{
-  --ink:#14232b; --bar:#16323f; --bar2:#1f4353; --paper:#eef1f2; --line:#cfd8dc;
-  --acc:#e2572b; --acc-d:#bf4520; --ok:#1c7c54; --mute:#5c6f78; --card:#fff;
+  --ink:#16153a; --bar:#1e1b4b; --bar2:#34308a; --paper:#eef0f6; --line:#d2d6e6;
+  --acc:#ef3340; --acc-d:#c9202c; --ok:#1c7c54; --mute:#5c6f78; --card:#fff;
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
 }
 *{box-sizing:border-box}
@@ -55,6 +56,8 @@ svg.draw .ann{pointer-events:none}
 .ann.sel,.ann.sel *{touch-action:none;cursor:move}
 .selbox{fill:none;stroke:#1a73e8;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;stroke-width:1.5;pointer-events:none}
 .handle{fill:#1a73e8;stroke:#fff;vector-effect:non-scaling-stroke;stroke-width:2;pointer-events:all;touch-action:none;cursor:nwse-resize}
+.handle[data-c=ne],.handle[data-c=sw]{cursor:nesw-resize}
+.delx,.delx *{pointer-events:all;touch-action:none;cursor:pointer}
 .hit{fill:#ffb300;opacity:.45;pointer-events:none}
 .forms{position:absolute;inset:0;pointer-events:none}
 .forms>*{position:absolute;pointer-events:auto;margin:0;border:1px solid #7aa7d8;background:rgba(225,238,255,.92);color:#000;padding:0 2px;font-family:Arial,Helvetica,sans-serif;border-radius:0;min-width:0}
@@ -98,6 +101,8 @@ body.drop #viewer{outline:3px dashed var(--acc);outline-offset:-8px}
 .th span{position:absolute;left:0;right:0;bottom:3px;font-size:12px;color:var(--mute)}
 .th[aria-pressed="true"]{border-color:var(--acc);background:#fff2ec}
 .th[aria-pressed="true"] span{color:var(--acc-d);font-weight:700}
+.th .grip{position:absolute;top:-2px;right:-2px;width:34px;height:34px;line-height:34px;font-style:normal;font-size:18px;color:#fff;background:var(--bar);border-radius:0 6px 0 10px;touch-action:none;cursor:grab}
+.th.drag{opacity:.55;border-style:dashed;border-color:var(--bar)}
 
 label.f{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
 textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink)}
@@ -110,11 +115,14 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
 .res small{color:var(--mute);display:block}
 #sigpad{width:100%;height:200px;border:2px dashed var(--line);border-radius:10px;touch-action:none;background:#fff;display:block}
 .lib{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
-.lib .it{position:relative;border:1px solid var(--line);border-radius:9px;padding:6px;background:#fff}
-.lib .it img{height:54px;max-width:150px;display:block;object-fit:contain}
-.lib .it .rm{position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:50%;background:#b3261e;color:#fff;font-size:13px;line-height:24px}
+.lib .it{border:1px solid var(--line);border-radius:10px;padding:8px;background:#fff;display:flex;flex-direction:column;gap:6px;align-items:center}
+.lib .it img{height:54px;max-width:150px;display:block;object-fit:contain;cursor:pointer}
+.itb{display:flex;gap:6px}
+.btn.sm{padding:7px 10px;font-size:13px}
+.qsl{display:flex;flex-wrap:wrap;gap:14px 12px;padding:10px 4px 6px}
+.qs{border:3px double currentColor;padding:7px 12px;font-weight:800;font-size:14px;letter-spacing:.02em;transform:rotate(-6deg);background:#fff;border-radius:2px}
 .note{font-size:13px;color:var(--mute);line-height:1.45}
-#toast{position:fixed;left:50%;bottom:calc(64px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;max-width:90vw;display:none;z-index:40;text-align:center}
+#toast{position:fixed;left:50%;bottom:calc(64px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;max-width:90vw;display:none;z-index:40;text-align:center;pointer-events:none}
 #toast.on{display:block}
 #busy{position:fixed;inset:0;background:rgba(255,255,255,.7);display:none;align-items:center;justify-content:center;z-index:50;font-weight:600}
 #busy.on{display:flex}
@@ -124,7 +132,7 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
 <body>
 <div id="top">
   <button class="tb" id="bOpen">Apri</button>
-  <div class="name" id="docName">Editor PDF</div>
+  <div class="name" id="docName">ninetto-pdf</div>
   <button class="tb" id="bShare" disabled>Condividi</button>
   <button class="tb pri" id="bSave" disabled>Salva</button>
 </div>
@@ -137,6 +145,7 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
   <button class="tool" data-tool="ink">Disegna</button>
   <button class="tool" data-tool="cover">Correggi</button>
   <button class="tool" data-tool="erase">Cancella</button>
+  <button class="tool" data-tool="white">Bianchetto</button>
   <button class="tool" id="bSign">Firma</button>
   <button class="tool" id="bStamp">Timbro</button>
   <span class="sep"></span>
@@ -151,7 +160,8 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
 <div id="viewer">
   <div id="pages"></div>
   <div id="empty">
-    <h1>Editor PDF</h1>
+    <img src="icons/icon.svg" alt="" width="84" height="84">
+    <h1>ninetto-pdf</h1>
     <p>Apri un PDF per leggerlo, annotarlo, firmarlo, riordinare le pagine o correggere un dato.</p>
     <button class="big" id="bOpen2">Apri PDF</button>
     <p class="note">I documenti restano su questo dispositivo: non vengono caricati online.</p>
@@ -174,7 +184,7 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
 <div class="sheet" id="shPages"><div class="box">
   <header><h2>Pagine</h2><button class="x" data-close>Chiudi</button></header>
   <div class="body">
-    <p class="note" style="margin-top:0">Tocca le pagine per selezionarle, poi scegli cosa fare.</p>
+    <p class="note" style="margin-top:0">Tocca le pagine per selezionarle. Per cambiare l'ordine trascina la maniglia ⠿. «Aggiungi PDF» inserisce il file dopo la pagina selezionata (o in fondo).</p>
     <div id="thumbs"></div>
   </div>
   <div class="foot">
@@ -223,7 +233,7 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
 <div class="sheet" id="shSign"><div class="box">
   <header><h2>Firma</h2><button class="x" data-close>Chiudi</button></header>
   <div class="body">
-    <p class="note" style="margin-top:0">Scegli una firma salvata, oppure disegnane una nuova qui sotto.</p>
+    <p class="note" style="margin-top:0">Scegli una firma o una sigla salvata (fino a 3), oppure disegnane una nuova qui sotto. <b id="sigCount"></b></p>
     <div class="lib" id="sigLib"></div>
     <label class="f">Nuova firma</label>
     <canvas id="sigpad"></canvas>
@@ -233,9 +243,11 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
 
 <!-- Timbro -->
 <div class="sheet" id="shStamp"><div class="box">
-  <header><h2>Timbri e immagini</h2><button class="x" data-close>Chiudi</button></header>
+  <header><h2>Timbri</h2><button class="x" data-close>Chiudi</button></header>
   <div class="body">
-    <p class="note" style="margin-top:0">Scegli un timbro salvato, oppure carica un'immagine (per esempio il timbro «copia conforme» o un logo).</p>
+    <label class="f" style="margin-top:0">Timbri rapidi (con la data di oggi)</label>
+    <div class="qsl" id="qsLib"></div>
+    <label class="f">Le tue immagini (timbro aziendale, logo…)</label>
     <div class="lib" id="stLib"></div>
   </div>
   <div class="foot"><span class="grow"></span><button class="btn pri" id="stAdd">Carica immagine</button></div>
