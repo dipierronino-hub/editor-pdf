@@ -25,4 +25,4 @@ I documenti restano sul dispositivo: l'app non carica nulla online e non richied
 - `lib/`: pdf.js 4.10.38 (visualizzazione) e pdf-lib 1.17.1 (scrittura), copiate nel repository.
 - Versione mostrata nella schermata iniziale: costante `VERSIONE` in `app.js`.
 
-Pubblicazione: GitHub Pages dal ramo `main`.
+Pubblicazione: GitHub Pages dal ramo `gh-pages` (https://dipierronino-hub.github.io/editor-pdf/). Dopo ogni modifica su `main`: `git push origin main:gh-pages`.
