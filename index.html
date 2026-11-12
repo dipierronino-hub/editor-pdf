@@ -28,6 +28,12 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .tb.pri{background:var(--acc)}
 .tb.pri:active{background:var(--acc-d)}
 .tb:disabled{opacity:.4}
+/* link a ninetto-converter: discreto (bordo sottile), solo icona sul telefono */
+a.tb{text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.tb.conv{background:transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);font-weight:500}
+.tb.conv:hover{background:var(--bar2)}
+.tb.conv svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+@media(max-width:599px){.tb.conv{padding:9px}.tb.conv span{display:none}}
 
 #tools{background:#fff;border-bottom:1px solid var(--line);display:flex;gap:4px;padding:6px 8px;overflow-x:auto;scrollbar-width:none;flex:none}
 #tools::-webkit-scrollbar{display:none}
@@ -69,6 +75,8 @@ body.drawing .forms>*{pointer-events:none}
 #empty h1{margin:0;font-size:26px;letter-spacing:-.01em}
 #empty p{margin:0;color:var(--mute);max-width:34ch;line-height:1.45}
 #empty .big{padding:16px 28px;border-radius:12px;background:var(--acc);color:#fff;font-size:18px;font-weight:700}
+#empty .conv{color:var(--bar2);font-size:14px;font-weight:600;text-decoration:none;padding:8px 12px;border-radius:8px}
+#empty .conv:hover{background:#e2e4f3;text-decoration:underline}
 #empty .ver{font-size:12px;color:var(--mute);margin-top:10px}
 body.drop #viewer{outline:3px dashed var(--acc);outline-offset:-8px}
 
@@ -135,6 +143,10 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
 <div id="top">
   <button class="tb" id="bOpen">Apri</button>
   <div class="name" id="docName">ninetto-pdf</div>
+  <!-- Collegamento a ninetto-converter (si apre in una nuova scheda) -->
+  <a class="tb conv" id="bConv" href="https://dipierronino-hub.github.io/ninetto-converter/" target="_blank" rel="noopener" title="Converti file con ninetto-converter" aria-label="Converti file con ninetto-converter">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span>Converti</span>
+  </a>
   <button class="tb" id="bPrint" disabled title="Stampa (Ctrl+P)" aria-label="Stampa">🖨</button>
   <button class="tb" id="bShare" disabled>Condividi</button>
   <button class="tb pri" id="bSave" disabled>Salva</button>
@@ -168,6 +180,7 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
     <p>Apri un PDF per leggerlo, annotarlo, firmarlo, riordinare le pagine o correggere un dato.</p>
     <button class="big" id="bOpen2">Apri PDF</button>
     <p class="note">I documenti restano su questo dispositivo: non vengono caricati online.</p>
+    <a class="conv" href="https://dipierronino-hub.github.io/ninetto-converter/" target="_blank" rel="noopener">Devi convertire Word, Excel o immagini? Vai a ninetto-converter →</a>
     <div class="ver" id="ver"></div>
   </div>
 </div>
