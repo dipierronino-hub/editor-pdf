@@ -2,7 +2,7 @@
 // I documenti restano sul dispositivo: nessun caricamento online.
 import * as pdfjsLib from './lib/pdf.min.mjs';
 
-const VERSIONE = '2026-11-12c';
+const VERSIONE = '2026-11-12d';
 const LIB = new URL('./lib/', import.meta.url).href;
 pdfjsLib.GlobalWorkerOptions.workerSrc = LIB + 'pdf.worker.min.mjs';
 const { PDFDocument, StandardFonts, rgb, degrees, BlendMode, LineCapStyle } = window.PDFLib;
@@ -469,15 +469,21 @@ async function cancella(r, box, x, y) {
       const b = bbox(p.ann[i]);
       if (x >= b.x - 2 && x <= b.x + b.w + 2 && y >= b.y - 2 && y <= b.y + b.h + 2) { snap(); p.ann.splice(i, 1); drawAnn(r); return; }
     }
-    const items = await textItems(p).catch(() => []);
-    const it = items.find(i => i.flat && x >= i.x - 2 && x <= i.x + i.w + 2 && y >= i.by - i.fh * 1.05 && y <= i.by + i.fh * 0.35);
-    if (!it) return toast('Qui non trovo una scritta: trascina un riquadro sopra la parte da cancellare');
-    box = { x: it.x - 1, y: it.by - it.fh * 0.98, w: it.w + 2, h: it.fh * 1.3 };
+    const sc = await scritte(p).catch(e => { console.warn('scritte', e); return []; });
+    const dist = b => Math.hypot(Math.max(b[0] - x, 0, x - b[2]), Math.max(b[1] - y, 0, y - b[3]));
+    const vicine = sc.filter(b => dist(b) <= 2).sort((a, b) => dist(a) - dist(b) || (a[2] - a[0]) * (a[3] - a[1]) - (b[2] - b[0]) * (b[3] - b[1]));
+    if (vicine.length) { const b = vicine[0]; box = { x: b[0] - 1, y: b[1], w: b[2] - b[0] + 2, h: b[3] - b[1] }; }
+    else {
+      const items = await textItems(p).catch(() => []);
+      const it = items.find(i => i.flat && x >= i.x - 2 && x <= i.x + i.w + 2 && y >= i.by - i.fh * 1.05 && y <= i.by + i.fh * 0.35);
+      if (!it) return toast('Qui non trovo una scritta: trascina un riquadro sopra la parte da cancellare');
+      box = { x: it.x - 1, y: it.by - it.fh * 0.98, w: it.w + 2, h: it.fh * 1.3 };
+    }
   }
   const col = sampleColors(r, box);
   snap();
-  p.ann.push({ id: nid(), t: 'cover', ...box, bg: col.bg, tx: box.x, by: box.y, text: '', size: 11, font: 'H', bold: false, c: '#000000' });
-  drawAnn(r);
+  const a = { id: nid(), t: 'cover', ...box, bg: col.bg, tx: box.x, by: box.y, text: '', size: 11, font: 'H', bold: false, c: '#000000' };
+  p.ann.push(a); select(p.id, a.id); // resta selezionata: con le maniglie agli angoli si aggiusta il riquadro
 }
 
 /* ---------- firme e timbri ---------- */
@@ -628,50 +634,126 @@ function userBox(bvp, a, m = 1) {
   return [Math.min(...pts.map(q => q[0])) - m, Math.min(...pts.map(q => q[1])) - m, Math.max(...pts.map(q => q[0])) + m, Math.max(...pts.map(q => q[1])) + m];
 }
 
-// Toglie dal contenuto della pagina le scritte che iniziano dentro i riquadri coperti.
-// Restituisce il nuovo contenuto e quante scritte ha tolto.
-function pulisci(src, boxes, isImage = () => false) {
+// Stringhe del contenuto PDF → byte (codici dei caratteri)
+function strBytes(t) {
+  const out = [];
+  if (t[0] === '<') { const h = t.slice(1, -1).replace(/[^0-9a-fA-F]/g, ''); for (let k = 0; k < h.length; k += 2) out.push(parseInt((h[k] + (h[k + 1] || '0')), 16)); return out; }
+  const E = { n: 10, r: 13, t: 9, b: 8, f: 12 };
+  for (let k = 1; k < t.length - 1; k++) {
+    let c = t[k];
+    if (c !== '\\') { out.push(c.charCodeAt(0) & 255); continue; }
+    c = t[++k];
+    if (c in E) out.push(E[c]);
+    else if (c >= '0' && c <= '7') { let o = c; while (o.length < 3 && t[k + 1] >= '0' && t[k + 1] <= '7') o += t[++k]; out.push(parseInt(o, 8) & 255); }
+    else if (c === '\r') { if (t[k + 1] === '\n') k++; }
+    else if (c === '\n') { }
+    else out.push(c.charCodeAt(0) & 255);
+  }
+  return out;
+}
+const hexStr = b => '<' + b.map(v => v.toString(16).padStart(2, '0')).join('') + '>';
+const num = v => { const s = (Math.round(v * 1000) / 1000).toString(); return s.includes('e') ? '0' : s; };
+
+// Toglie dal contenuto della pagina le lettere che stanno dentro i riquadri coperti (lettera per lettera:
+// se il riquadro copre metà riga, l'altra metà resta). Senza le larghezze del carattere (fontInfo) toglie solo
+// le scritte interamente lontane dal bordo; se una scritta a larghezza ignota tocca un riquadro, si ferma (la pagina diventa immagine).
+// Restituisce il nuovo contenuto e quante scritte ha modificato.
+// Con «onRun» riporta anche, per ogni scritta, il riquadro di ogni lettera (serve al tocco di «Cancella»).
+function pulisci(src, boxes, isImage = () => false, fontInfo = () => null, onRun = null) {
   const n = src.length, WS = ' \t\r\n\f\0', DL = '()<>[]{}/%';
-  let i = 0, ops = [], ctm = [1, 0, 0, 1, 0, 0], tlm = [1, 0, 0, 1, 0, 0], tl = 0, known = false, inside = false;
+  let i = 0, ops = [], ctm = [1, 0, 0, 1, 0, 0], tlm = [1, 0, 0, 1, 0, 0], tm = tlm;
+  let ts = { f: null, fs: 0, tc: 0, tw: 0, th: 1, tl: 0, rise: 0 };
   const st = [], cuts = [], tolte = new Set(), tenute = new Set(); let bi = -1;
   const dentro = () => { const q = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => [x * ctm[0] + y * ctm[2] + ctm[4], x * ctm[1] + y * ctm[3] + ctm[5]]); const b = [Math.min(...q.map(v => v[0])), Math.min(...q.map(v => v[1])), Math.max(...q.map(v => v[0])), Math.max(...q.map(v => v[1]))]; return boxes.some(c => b[0] >= c[0] && b[1] >= c[1] && b[2] <= c[2] && b[3] <= c[3]); };
+  const inBox = (x, y) => boxes.some(b => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]);
   const skipStr = () => { let d = 1; i++; while (i < n && d) { const c = src[i]; if (c === '\\') i += 2; else { if (c === '(') d++; else if (c === ')') d--; i++; } } };
   const nums = k => ops.slice(-k).map(o => o.v || 0);
-  const show = (s, e, rep) => {
-    let ins;
-    if (known) { const m = mm(tlm, ctm); ins = boxes.some(b => m[4] >= b[0] && m[4] <= b[2] && m[5] >= b[1] && m[5] <= b[3]); inside = ins; known = false; } else ins = inside;
-    if (ins) cuts.push([s, e, rep]);
+  const nextLine = () => { tlm = mm([1, 0, 0, 1, 0, -ts.tl], tlm); tm = tlm; };
+  // els: elementi della scritta (stringhe come testo grezzo, numeri dei TJ); s..e: posizione nel contenuto; pre: operatori da tenere
+  const show = (els, s, e, pre) => {
+    const M = mm(tm, ctm), fi = ts.f != null ? fontInfo(ts.f) : null, fs = ts.fs, th = ts.th;
+    const at = (u, v) => [u * M[0] + v * M[2] + M[4], u * M[1] + v * M[3] + M[5]];
+    if (!fi || !fs || !th) {
+      // larghezze ignote: se la scritta parte vicino a un riquadro non posso sapere fin dove arriva
+      const o = at(0, 0), r = Math.abs(fs) * Math.hypot(M[2], M[3]) * 1.5 + 2;
+      if (boxes.some(b => o[1] >= b[1] - r && o[1] <= b[3] + r && o[0] <= b[2] + r)) throw new Error('larghezze del carattere non disponibili');
+      return;
+    }
+    const parts = []; let cur = 0, nIn = 0, nOut = 0;
+    for (const el of els) {
+      if (typeof el === 'number') { const d = -el / 1000 * fs * th; parts.push({ gap: d }); cur += d; continue; }
+      const b = strBytes(el), L = fi.two ? 2 : 1;
+      for (let k = 0; k + L <= b.length; k += L) {
+        const code = L === 2 ? b[k] << 8 | b[k + 1] : b[k], w0 = fi.w(code);
+        const adv = (w0 / 1000 * fs + ts.tc + (L === 1 && code === 32 ? ts.tw : 0)) * th;
+        const gw = w0 / 1000 * fs * th, c = at(cur + gw / 2, ts.rise + fs * 0.3), via = inBox(c[0], c[1]);
+        via ? nIn++ : nOut++;
+        parts.push({ bytes: b.slice(k, k + L), adv, via, u: cur, gw }); cur += adv;
+      }
+    }
+    tm = mm([1, 0, 0, 1, cur, 0], tm);
+    if (onRun) onRun(parts.filter(p => p.gap == null).map(p => { const q = [at(p.u, ts.rise - fs * 0.32), at(p.u + p.gw, ts.rise - fs * 0.32), at(p.u, ts.rise + fs * 0.98), at(p.u + p.gw, ts.rise + fs * 0.98)]; return [Math.min(...q.map(v => v[0])), Math.min(...q.map(v => v[1])), Math.max(...q.map(v => v[0])), Math.max(...q.map(v => v[1]))]; }), Math.abs(fs * Math.hypot(M[2], M[3])));
+    if (!nIn) return;
+    if (!nOut) { cuts.push([s, e, pre]); return; }
+    // metà dentro e metà fuori: riscrivo la scritta come TJ, con uno spazio vuoto al posto delle lettere tolte
+    const arr = [], tj = g => num(-g * 1000 / (fs * th)); let buf = [], gap = 0;
+    for (const p of parts) {
+      if (p.gap != null || p.via) { gap += p.gap != null ? p.gap : p.adv; continue; }
+      if (gap) { if (buf.length) { arr.push(hexStr(buf)); buf = []; } arr.push(tj(gap)); gap = 0; }
+      buf.push(...p.bytes);
+    }
+    if (buf.length) arr.push(hexStr(buf)); if (gap) arr.push(tj(gap));
+    cuts.push([s, e, (pre ? pre + ' ' : '') + '[' + arr.join(' ') + '] TJ']);
+  };
+  const arrEls = (a, b) => { // elementi di un array TJ
+    const out = []; let k = a + 1;
+    while (k < b - 1) {
+      const c = src[k];
+      if (WS.includes(c)) { k++; continue; }
+      if (c === '(') { const s0 = k; let d = 1; k++; while (k < b && d) { const ch = src[k]; if (ch === '\\') k += 2; else { if (ch === '(') d++; else if (ch === ')') d--; k++; } } out.push(src.slice(s0, k)); continue; }
+      if (c === '<') { const e = src.indexOf('>', k); out.push(src.slice(k, e + 1)); k = e + 1; continue; }
+      const s0 = k; while (k < b - 1 && !WS.includes(src[k]) && !DL.includes(src[k])) k++;
+      const v = parseFloat(src.slice(s0, k)); if (!isNaN(v)) out.push(v); else if (k === s0) k++;
+    }
+    return out;
   };
   while (i < n) {
     while (i < n && WS.includes(src[i])) i++;
     if (i >= n) break;
     const c = src[i], start = i;
     if (c === '%') { while (i < n && src[i] !== '\n' && src[i] !== '\r') i++; continue; }
-    if (c === '(') { skipStr(); ops.push({ s: start }); continue; }
+    if (c === '(') { skipStr(); ops.push({ s: start, e: i, str: true }); continue; }
     if (c === '<' && src[i + 1] === '<') { let d = 0; do { if (src.startsWith('<<', i)) { d++; i += 2; } else if (src.startsWith('>>', i)) { d--; i += 2; } else if (src[i] === '(') skipStr(); else i++; } while (d && i < n); ops.push({ s: start }); continue; }
-    if (c === '<') { const e = src.indexOf('>', i); i = e < 0 ? n : e + 1; ops.push({ s: start }); continue; }
-    if (c === '[') { let d = 0; do { const ch = src[i]; if (ch === '(') skipStr(); else if (ch === '<' && src[i + 1] !== '<') { const e = src.indexOf('>', i); i = e < 0 ? n : e + 1; } else { if (ch === '[') d++; else if (ch === ']') d--; i++; } } while (d && i < n); ops.push({ s: start }); continue; }
+    if (c === '<') { const e = src.indexOf('>', i); i = e < 0 ? n : e + 1; ops.push({ s: start, e: i, str: true }); continue; }
+    if (c === '[') { let d = 0; do { const ch = src[i]; if (ch === '(') skipStr(); else if (ch === '<' && src[i + 1] !== '<') { const e = src.indexOf('>', i); i = e < 0 ? n : e + 1; } else { if (ch === '[') d++; else if (ch === ']') d--; i++; } } while (d && i < n); ops.push({ s: start, e: i, arr: true }); continue; }
     if (c === '/') { i++; while (i < n && !WS.includes(src[i]) && !DL.includes(src[i])) i++; ops.push({ s: start, name: src.slice(start + 1, i) }); continue; }
     if (DL.includes(c)) { i++; continue; }
     while (i < n && !WS.includes(src[i]) && !DL.includes(src[i])) i++;
     const tok = src.slice(start, i);
     if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(tok)) { ops.push({ s: start, v: parseFloat(tok) }); continue; }
+    const last = ops[ops.length - 1];
     switch (tok) {
-      case 'q': st.push(ctm); break;
-      case 'Q': ctm = st.pop() || ctm; break;
+      case 'q': st.push([ctm, { ...ts }]); break;
+      case 'Q': { const t = st.pop(); if (t) { ctm = t[0]; ts = t[1]; } break; }
       case 'cm': ctm = mm(nums(6), ctm); break;
-      case 'BT': tlm = [1, 0, 0, 1, 0, 0]; known = true; inside = false; break;
-      case 'Td': { const [x, y] = nums(2); tlm = mm([1, 0, 0, 1, x, y], tlm); known = true; break; }
-      case 'TD': { const [x, y] = nums(2); tl = -y; tlm = mm([1, 0, 0, 1, x, y], tlm); known = true; break; }
-      case 'TL': tl = nums(1)[0]; break;
-      case 'Tm': tlm = nums(6); known = true; break;
-      case 'T*': tlm = mm([1, 0, 0, 1, 0, -tl], tlm); known = true; break;
-      case 'Tj': case 'TJ': if (ops.length) show(ops[ops.length - 1].s, i, ''); break;
-      case "'": tlm = mm([1, 0, 0, 1, 0, -tl], tlm); known = true; if (ops.length) show(ops[ops.length - 1].s, i, 'T*'); break;
-      case '"': { tlm = mm([1, 0, 0, 1, 0, -tl], tlm); known = true; if (ops.length >= 3) { const [aw, ac] = nums(3); show(ops[ops.length - 3].s, i, `${aw} Tw ${ac} Tc T*`); } break; }
+      case 'BT': tlm = tm = [1, 0, 0, 1, 0, 0]; break;
+      case 'Td': { const [x, y] = nums(2); tlm = mm([1, 0, 0, 1, x, y], tlm); tm = tlm; break; }
+      case 'TD': { const [x, y] = nums(2); ts.tl = -y; tlm = mm([1, 0, 0, 1, x, y], tlm); tm = tlm; break; }
+      case 'TL': ts.tl = nums(1)[0]; break;
+      case 'Tc': ts.tc = nums(1)[0]; break;
+      case 'Tw': ts.tw = nums(1)[0]; break;
+      case 'Tz': ts.th = nums(1)[0] / 100; break;
+      case 'Ts': ts.rise = nums(1)[0]; break;
+      case 'Tf': if (ops.length >= 2 && ops[ops.length - 2].name != null) { ts.f = ops[ops.length - 2].name; ts.fs = nums(1)[0]; } break;
+      case 'Tm': tlm = tm = nums(6); break;
+      case 'T*': nextLine(); break;
+      case 'Tj': if (last && last.str) show([src.slice(last.s, last.e)], last.s, i, ''); break;
+      case 'TJ': if (last && last.arr) show(arrEls(last.s, last.e), last.s, i, ''); break;
+      case "'": nextLine(); if (last && last.str) show([src.slice(last.s, last.e)], last.s, i, 'T*'); break;
+      case '"': { if (ops.length >= 3 && last && last.str) { const [aw, ac] = nums(3); ts.tw = aw; ts.tc = ac; nextLine(); show([src.slice(last.s, last.e)], ops[ops.length - 3].s, i, `${aw} Tw ${ac} Tc T*`); } break; }
       case 'BI': bi = start; break;
       case 'ID': { const m = /[\s]EI(?=[\s]|$)/g; m.lastIndex = i; const r = m.exec(src); i = r ? r.index + 3 : n; if (bi >= 0 && dentro()) cuts.push([bi, i, '']); bi = -1; break; }
-      case 'Do': { const o = ops[ops.length - 1]; if (o && o.name != null && isImage(o.name)) { if (dentro()) { cuts.push([o.s, i, '']); tolte.add(o.name); } else tenute.add(o.name); } break; }
+      case 'Do': { const o = last; if (o && o.name != null && isImage(o.name)) { if (dentro()) { cuts.push([o.s, i, '']); tolte.add(o.name); } else tenute.add(o.name); } break; }
     }
     ops = [];
   }
@@ -694,16 +776,81 @@ function svuota(node) {
   refs.forEach(r => node.context.delete(r)); if (extra) node.context.delete(extra);
   for (const k of ['Contents', 'Resources', 'Annots', 'Thumb']) node.delete(L.PDFName.of(k));
 }
+// Larghezze dei caratteri di un font della pagina (in millesimi di corpo), per sapere dove sta ogni lettera.
+// null se non si possono conoscere: in quel caso pulisci() non taglia le scritte a metà.
+const STD14 = { helvetica: 'Helvetica', arial: 'Helvetica', arialmt: 'Helvetica', times: 'Times-Roman', timesroman: 'Times-Roman', timesnewroman: 'Times-Roman', timesnewromanps: 'Times-Roman', timesnewromanpsmt: 'Times-Roman', courier: 'Courier', couriernew: 'Courier', couriernewpsmt: 'Courier', symbol: 'Symbol', zapfdingbats: 'ZapfDingbats' };
+function fontInfoDa(res) {
+  const L = window.PDFLib, N = L.PDFName.of, cache = new Map();
+  const fonts = res ? res.lookup(N('Font')) : null;
+  const numero = o => (o && o.asNumber ? o.asNumber() : null);
+  const leggi = name => {
+    const f = fonts instanceof L.PDFDict ? fonts.lookup(N(name)) : null; if (!(f instanceof L.PDFDict)) return null;
+    const sub = f.lookup(N('Subtype')), sname = sub instanceof L.PDFName ? sub.asString() : '';
+    if (sname === '/Type0') {
+      const enc = f.lookup(N('Encoding')); if (!(enc instanceof L.PDFName) || enc.asString() !== '/Identity-H') return null;
+      const df = f.lookup(N('DescendantFonts')), d = df instanceof L.PDFArray ? df.lookup(0) : null; if (!(d instanceof L.PDFDict)) return null;
+      const dw = numero(d.lookup(N('DW'))) ?? 1000, W = d.lookup(N('W')), m = new Map(), rng = [];
+      if (W instanceof L.PDFArray) {
+        const v = W.asArray().map(x => (x instanceof L.PDFRef ? d.context.lookup(x) : x));
+        for (let k = 0; k < v.length;) {
+          const c0 = numero(v[k]);
+          if (v[k + 1] instanceof L.PDFArray) { v[k + 1].asArray().forEach((x, j) => m.set(c0 + j, numero(d.context.lookup(x) || x) ?? dw)); k += 2; }
+          else { rng.push([c0, numero(v[k + 1]), numero(v[k + 2])]); k += 3; }
+        }
+      }
+      return { two: true, w: c => m.has(c) ? m.get(c) : (rng.find(r => c >= r[0] && c <= r[1]) || [0, 0, dw])[2] };
+    }
+    const fm = sname === '/Type3' ? f.lookup(N('FontMatrix')) : null, k3 = fm instanceof L.PDFArray ? (numero(fm.lookup(0)) || 0.001) * 1000 : 1;
+    const ws = f.lookup(N('Widths')), fc = numero(f.lookup(N('FirstChar'))) ?? 0;
+    if (ws instanceof L.PDFArray) {
+      const fd = f.lookup(N('FontDescriptor')), miss = fd instanceof L.PDFDict ? numero(fd.lookup(N('MissingWidth'))) ?? 0 : 0;
+      const v = ws.asArray().map(x => numero(x instanceof L.PDFRef ? f.context.lookup(x) : x));
+      return { two: false, w: c => (v[c - fc] ?? miss) * k3 };
+    }
+    // i 14 font standard possono non avere le larghezze nel file: le prendo da pdf-lib
+    const bf = f.lookup(N('BaseFont')), base = bf instanceof L.PDFName ? bf.asString().slice(1).replace(/^[A-Z]{6}\+/, '') : '';
+    const [fam, sty = ''] = base.split(/[-,]/), std = STD14[fam.toLowerCase().replace(/\s/g, '')]; if (!std || sname === '/Type3') return null;
+    const b = /bold/i.test(sty), it = /italic|oblique/i.test(sty);
+    const nome = std === 'Helvetica' ? 'Helvetica' + (b && it ? '-BoldOblique' : b ? '-Bold' : it ? '-Oblique' : '') : std === 'Times-Roman' ? (b && it ? 'Times-BoldItalic' : b ? 'Times-Bold' : it ? 'Times-Italic' : 'Times-Roman') : std === 'Courier' ? 'Courier' + (b && it ? '-BoldOblique' : b ? '-Bold' : it ? '-Oblique' : '') : std;
+    const emb = L.StandardFontEmbedder.for(nome), mw = new Map();
+    return { two: false, w: c => { if (!mw.has(c)) { let w = null; try { w = emb.widthOfTextAtSize(String.fromCharCode(c), 1000); } catch { } mw.set(c, w ?? 500); } return mw.get(c); } };
+  };
+  return name => { if (!cache.has(name)) { let v = null; try { v = leggi(name); } catch (e) { console.warn('font', name, e); } cache.set(name, v); } return cache.get(name); };
+}
+function contenuto(node, refs = contentRefs(node).refs) {
+  const L = window.PDFLib; let s = '';
+  for (const r of refs) { const st = node.context.lookup(r); if (!(st instanceof L.PDFRawStream)) throw new Error('contenuto non leggibile'); s += latin1(L.decodePDFRawStream(st).decode()) + '\n'; }
+  return s;
+}
+// Le scritte della pagina come le ha messe chi ha creato il PDF (ogni «campo» è una scritta), con il riquadro di ogni lettera
+// in coordinate dello schermo a scala 1. Le scritte con spazi molto larghi in mezzo vengono divise in pezzi.
+async function scritte(p) {
+  const src = S.sources[p.src]; src.sc = src.sc || {}; if (src.sc[p.idx]) return src.sc[p.idx];
+  const L = window.PDFLib;
+  if (!src.lib) src.lib = PDFDocument.load(src.bytes, { updateMetadata: false });
+  const doc = await src.lib, node = doc.getPages()[p.idx].node, res = node.Resources();
+  const vp = (await src.pdf.getPage(p.idx + 1)).getViewport({ scale: 1 }), out = [];
+  pulisci(contenuto(node), [], () => false, fontInfoDa(res), (gl, fh) => {
+    const v = gl.map(b => { const q = [vp.convertToViewportPoint(b[0], b[1]), vp.convertToViewportPoint(b[2], b[3])]; return [Math.min(q[0][0], q[1][0]), Math.min(q[0][1], q[1][1]), Math.max(q[0][0], q[1][0]), Math.max(q[0][1], q[1][1])]; });
+    let pezzo = null;
+    for (const b of v) {
+      if (b[2] - b[0] < 0.01) continue;
+      if (pezzo && b[0] - pezzo[2] < fh * 0.9 && b[0] > pezzo[0] - 1) { pezzo[2] = Math.max(pezzo[2], b[2]); pezzo[1] = Math.min(pezzo[1], b[1]); pezzo[3] = Math.max(pezzo[3], b[3]); }
+      else { if (pezzo) out.push(pezzo); pezzo = b.slice(); }
+    }
+    if (pezzo) out.push(pezzo);
+  });
+  return (src.sc[p.idx] = out);
+}
 // Cancella dalla pagina il testo e le annotazioni che stanno sotto le coperture
 function cancellaSotto(node, boxes) {
   const L = window.PDFLib, ctx = node.context, { refs, extra } = contentRefs(node);
   if (refs.length) {
-    let s = '';
-    for (const r of refs) { const st = ctx.lookup(r); if (!(st instanceof L.PDFRawStream)) throw new Error('contenuto non leggibile'); s += latin1(L.decodePDFRawStream(st).decode()) + '\n'; }
+    const s = contenuto(node, refs);
     if (s.includes('/ActualText')) throw new Error('testo alternativo presente');
     const N = L.PDFName.of, res = node.Resources(), xo = res ? res.lookup(N('XObject')) : null;
     const isImage = name => { try { const o = xo instanceof L.PDFDict ? xo.lookup(N(name)) : null; return o instanceof L.PDFStream && o.dict.lookup(N('Subtype')) === N('Image'); } catch { return false; } };
-    const r = pulisci(s, boxes, isImage);
+    const r = pulisci(s, boxes, isImage, fontInfoDa(res));
     if (r.n) { node.set(N('Contents'), ctx.register(ctx.flateStream(unlatin1(r.s)))); refs.forEach(x => ctx.delete(x)); if (extra) ctx.delete(extra); }
     if (r.immagini.length) { // le immagini cancellate vanno tolte anche dall'elenco delle risorse della pagina (copiato, perché può essere condiviso con altre pagine)
       const res2 = ctx.obj({}), xo2 = ctx.obj({});
@@ -872,7 +1019,8 @@ function voci(tc, vp) {
   }
   return out;
 }
-const sotto = (it, a) => it.flat ? (Math.min(it.x + it.w, a.x + a.w) - Math.max(it.x, a.x) > 1 && it.by >= a.y - .5 && it.by <= a.y + a.h + .5) : (it.x >= a.x && it.x <= a.x + a.w && it.by >= a.y && it.by <= a.y + a.h);
+// una lettera tagliata dal bordo del riquadro (con il centro fuori) resta nel file: conta come «sotto» solo una sovrapposizione più larga di mezza lettera
+const sotto = (it, a) => it.flat ? (Math.min(it.x + it.w, a.x + a.w) - Math.max(it.x, a.x) > Math.max(1, Math.min(it.w * 0.9, it.fh * 0.5)) && it.by >= a.y - .5 && it.by <= a.y + a.h + .5) : (it.x >= a.x && it.x <= a.x + a.w && it.by >= a.y && it.by <= a.y + a.h);
 const nch = list => list.reduce((t, it) => t + it.str.replace(/\s/g, '').length, 0);
 async function verifica(bytes, pages, forza) {
   const todo = pages.map((p, i) => [p, i]).filter(([p]) => covers(p).length && !forza.has(p.id)); if (!todo.length) return [];

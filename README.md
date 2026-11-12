@@ -20,8 +20,12 @@ I documenti restano sul dispositivo: l'app non carica nulla online e non richied
 ## Garanzie e limiti
 - **Correggi cancella davvero**: il testo coperto viene tolto dal file, non solo nascosto. Dopo il salvataggio l'app riapre il PDF e
   controlla che sotto le coperture non sia rimasto nulla e che il resto del testo ci sia ancora. Se la cancellazione «pulita» non è
-  possibile (scansioni, copertura che taglia una riga a metà, PDF con struttura particolare), quella pagina viene salvata come immagine
-  con la copertura impressa.
+  possibile (scansioni, caratteri di cui il file non dà le larghezze, PDF con struttura particolare), quella pagina viene salvata come
+  immagine con la copertura impressa.
+- **Cancellazione lettera per lettera**: se il riquadro copre solo una parte di una riga, dal file vengono tolte solo le lettere che
+  stanno dentro il riquadro (conta il centro di ogni lettera); il resto della riga resta testo vero, nello stesso punto.
+- **Tocco con «Cancella»**: prende la scritta così come l'ha messa chi ha creato il PDF (di solito un campo: un importo, una data, un nome),
+  non tutta la riga. Il riquadro resta selezionato e si aggiusta con le maniglie agli angoli.
 - **Pagine eliminate**: il loro contenuto viene rimosso dal file, non resta nascosto.
 - **PDF protetti**: vengono sbloccati con qpdf (serve la password solo se il PDF la chiede per aprirsi) e restano testo vero.
 - **Moduli**: i campi compilati restano modificabili nel file salvato (per il documento principale; quelli di eventuali PDF aggiunti
