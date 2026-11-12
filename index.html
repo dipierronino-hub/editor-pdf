@@ -4,192 +4,481 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>ninetto-pdf</title>
+<meta name="description" content="Leggi, annota, firma, correggi e riorganizza i PDF. I documenti restano sul dispositivo.">
 <meta name="theme-color" content="#1e1b4b">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="alternate icon" type="image/png" href="icons/favicon-48.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
+<script>
+// tema scelto (chiaro/scuro) applicato prima del disegno, così non lampeggia; condiviso con ninetto-converter
+try { const t = localStorage.getItem('ninetto.tema'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) { }
+</script>
 <style>
+/* =========================================================================
+   ninetto · sistema grafico condiviso (stessi colori e componenti di ninetto-converter)
+   ========================================================================= */
 :root{
-  --ink:#16153a; --bar:#1e1b4b; --bar2:#34308a; --paper:#eef0f6; --line:#d2d6e6;
-  --acc:#ef3340; --acc-d:#c9202c; --ok:#1c7c54; --mute:#5c6f78; --card:#fff;
-  font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  --bg:#eceef6; --viewer:#e3e6f1; --surface:#ffffff; --surface-2:#f5f6fb; --surface-3:#eceef7;
+  --text:#17153a; --muted:#5f6684; --line:#dde0ed; --line-2:#c9cde0;
+  --brand:#4f46e5; --brand-2:#7c3aed; --brand-ink:#1e1b4b;
+  --acc:#e5283a; --acc-2:#f97316; --acc-grad:linear-gradient(135deg,#ef3340 0%,#f43f5e 45%,#f97316 100%);
+  --brand-grad:linear-gradient(135deg,#4f46e5,#7c3aed 55%,#c026d3);
+  --ok:#0f9f6e; --err:#dc2626; --warn:#d97706; --sel:#2563eb;
+  --shadow-1:0 1px 2px rgba(23,21,58,.06),0 1px 3px rgba(23,21,58,.08);
+  --shadow-2:0 10px 30px -12px rgba(49,46,129,.35);
+  --shadow-3:0 24px 60px -18px rgba(23,21,58,.45);
+  --r-s:10px; --r-m:14px; --r-l:20px;
+  --page-shadow:0 1px 3px rgba(23,21,58,.18),0 8px 24px -10px rgba(23,21,58,.28);
+  --ease:cubic-bezier(.2,.8,.2,1);
+  color-scheme:light;
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c0b1d; --viewer:#121129; --surface:#1a1935; --surface-2:#211f40; --surface-3:#2a2750;
+    --text:#eeeefe; --muted:#a3a6c6; --line:#2e2b56; --line-2:#3d3a6b;
+    --shadow-1:0 1px 2px rgba(0,0,0,.4); --shadow-2:0 10px 30px -12px rgba(0,0,0,.7); --shadow-3:0 24px 60px -18px rgba(0,0,0,.8);
+    --page-shadow:0 2px 6px rgba(0,0,0,.5),0 12px 30px -12px rgba(0,0,0,.7);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c0b1d; --viewer:#121129; --surface:#1a1935; --surface-2:#211f40; --surface-3:#2a2750;
+  --text:#eeeefe; --muted:#a3a6c6; --line:#2e2b56; --line-2:#3d3a6b;
+  --shadow-1:0 1px 2px rgba(0,0,0,.4); --shadow-2:0 10px 30px -12px rgba(0,0,0,.7); --shadow-3:0 24px 60px -18px rgba(0,0,0,.8);
+  --page-shadow:0 2px 6px rgba(0,0,0,.5),0 12px 30px -12px rgba(0,0,0,.7);
+  color-scheme:dark;
 }
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;background:var(--paper);color:var(--ink);overscroll-behavior:none}
-body{display:flex;flex-direction:column;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);overscroll-behavior:none}
+body{display:flex;flex-direction:column;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
 button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
-button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+:focus-visible{outline:2px solid var(--brand-2);outline-offset:2px}
+.ico{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+[hidden]{display:none!important}
 
-#top{background:var(--bar);color:#fff;display:flex;align-items:center;gap:6px;padding:8px 10px;padding-top:calc(8px + env(safe-area-inset-top))}
-#top .name{flex:1;min-width:0;font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#top .name small{display:block;font-weight:400;font-size:11px;opacity:.7}
-.tb{padding:9px 12px;border-radius:8px;background:var(--bar2);color:#fff;font-size:14px;font-weight:600;white-space:nowrap}
-.tb.pri{background:var(--acc)}
-.tb.pri:active{background:var(--acc-d)}
-.tb:disabled{opacity:.4}
-/* link a ninetto-converter: discreto (bordo sottile), solo icona sul telefono */
-a.tb{text-decoration:none;display:inline-flex;align-items:center;gap:6px}
-.tb.conv{background:transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);font-weight:500}
-.tb.conv:hover{background:var(--bar2)}
-.tb.conv svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-@media(max-width:599px){.tb.conv{padding:9px}.tb.conv span{display:none}}
+/* ---------- testata ---------- */
+#top{position:relative;z-index:6;display:flex;align-items:center;gap:6px;padding:8px 10px;padding-top:calc(8px + env(safe-area-inset-top));
+  background:linear-gradient(120deg,#1e1b4b 0%,#312e81 55%,#4c1d95 100%);color:#fff;box-shadow:0 2px 12px -4px rgba(30,27,75,.6)}
+.brand{display:flex;align-items:center;gap:9px;min-width:0;flex:1;text-decoration:none;color:inherit}
+.brand img{width:34px;height:34px;border-radius:10px;flex:none;box-shadow:0 4px 14px -4px rgba(0,0,0,.5)}
+.brand .tt{min-width:0;display:flex;flex-direction:column;line-height:1.15}
+.logo-name{font-weight:800;letter-spacing:-.02em;font-size:16px;white-space:nowrap}
+.logo-name b{font-weight:800;background:linear-gradient(90deg,#ff6b6b,#ffb347);-webkit-background-clip:text;background-clip:text;color:transparent}
+#docName{font-weight:650;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#docMeta{font-size:11.5px;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:6px}
+#docMeta .dot{width:7px;height:7px;border-radius:50%;background:#fbbf24;box-shadow:0 0 0 3px rgba(251,191,36,.25);flex:none}
+.tb{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:40px;min-width:40px;padding:0 12px;border-radius:12px;color:#fff;font-size:14px;font-weight:650;white-space:nowrap;text-decoration:none;
+  background:rgba(255,255,255,.1);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);transition:background .15s,transform .1s}
+.tb:hover{background:rgba(255,255,255,.18)}
+.tb:active{transform:scale(.96)}
+.tb:disabled{opacity:.38;pointer-events:none}
+.tb.pri{background:var(--acc-grad);box-shadow:0 6px 18px -6px rgba(239,51,64,.7)}
+.tb.pri:hover{filter:brightness(1.06)}
+.tb.icon{padding:0;width:40px}
+.tb .badge{position:absolute;top:5px;right:5px;width:9px;height:9px;border-radius:50%;background:#fbbf24;box-shadow:0 0 0 2px #7c2d12}
+.tb{position:relative}
+@media (max-width:719px){ .tb .lbl{display:none} .tb{padding:0;width:40px} .tb.pri{width:auto;padding:0 12px} .tb.pri .lbl{display:inline} .solo-pc{display:none!important} }
+@media (max-width:380px){ .tb.pri .lbl{display:none} .tb.pri{width:40px;padding:0} .brand img{display:none} }
+@media (min-width:720px){ .solo-tel{display:none!important} }
 
-#tools{background:#fff;border-bottom:1px solid var(--line);display:flex;gap:4px;padding:6px 8px;overflow-x:auto;scrollbar-width:none;flex:none}
+/* ---------- barra strumenti ---------- */
+#tools{position:relative;z-index:5;flex:none;display:flex;align-items:stretch;gap:2px;padding:6px 8px;background:var(--surface);border-bottom:1px solid var(--line);
+  overflow-x:auto;scrollbar-width:none;box-shadow:var(--shadow-1)}
 #tools::-webkit-scrollbar{display:none}
-.tool{padding:8px 11px;border-radius:8px;font-size:14px;white-space:nowrap;color:var(--ink);border:1px solid transparent}
-.tool[aria-pressed="true"]{background:var(--bar);color:#fff}
-.tool:disabled{opacity:.35}
-.sep{flex:none;width:1px;background:var(--line);margin:4px 3px}
+@media (min-width:1100px){#tools{justify-content:center}}
+.tool{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:58px;padding:6px 6px 5px;border-radius:12px;
+  font-size:11.5px;font-weight:600;color:var(--muted);white-space:nowrap;transition:background .15s,color .15s,transform .1s}
+.tool .ico{width:22px;height:22px}
+.tool:hover{background:var(--surface-2);color:var(--text)}
+.tool:active{transform:scale(.95)}
+.tool[aria-pressed="true"]{background:var(--brand-grad);color:#fff;box-shadow:0 6px 16px -8px rgba(79,70,229,.9)}
+.tool:disabled{opacity:.32;pointer-events:none}
+.sep{flex:none;width:1px;background:var(--line);margin:6px 4px}
 
-#opts{background:#f7f9fa;border-bottom:1px solid var(--line);display:none;gap:8px;align-items:center;padding:6px 10px;min-height:43px;overflow-x:auto;font-size:13px;color:var(--mute);flex:none}
+/* ---------- barra contestuale (opzioni dello strumento) ---------- */
+#opts{position:relative;z-index:4;flex:none;display:none;gap:8px;align-items:center;padding:6px 10px;min-height:46px;overflow-x:auto;scrollbar-width:none;
+  font-size:13px;color:var(--muted);background:var(--surface-2);border-bottom:1px solid var(--line)}
+#opts::-webkit-scrollbar{display:none}
 #opts.on{display:flex}
-#opts .hint{white-space:nowrap}
-.sw{flex:none;width:28px;height:28px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px var(--line)}
-.sw[aria-pressed="true"]{box-shadow:0 0 0 2px var(--ink)}
-.ob{flex:none;padding:6px 10px;border-radius:7px;background:#fff;border:1px solid var(--line);color:var(--ink);font-size:13px;white-space:nowrap}
-.ob.del{color:#b3261e;border-color:#e7b6b2}
+#opts .hint{white-space:nowrap;display:flex;align-items:center;gap:6px}
+#opts .hint .ico{width:16px;height:16px;color:var(--brand-2)}
+#opts .grp{display:flex;gap:4px;align-items:center;flex:none}
+#opts .vs{flex:none;width:1px;height:24px;background:var(--line)}
+.sw{flex:none;width:28px;height:28px;border-radius:50%;border:2px solid var(--surface);box-shadow:0 0 0 1px var(--line-2);transition:transform .12s}
+.sw:hover{transform:scale(1.1)}
+.sw[aria-pressed="true"]{box-shadow:0 0 0 2px var(--text)}
+.ob{flex:none;display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 11px;border-radius:10px;background:var(--surface);border:1px solid var(--line);color:var(--text);font-size:13px;font-weight:600;white-space:nowrap;transition:background .15s,border-color .15s}
+.ob .ico{width:17px;height:17px}
+.ob:hover{border-color:var(--line-2)}
+.ob[aria-pressed="true"]{border-color:var(--brand-2);background:color-mix(in srgb,var(--brand-2) 12%,var(--surface));color:var(--brand-2)}
+.ob.del{color:var(--err);border-color:color-mix(in srgb,var(--err) 35%,var(--line))}
+input.colpick{flex:none;width:30px;height:30px;padding:0;border:0;border-radius:50%;background:none;cursor:pointer}
+input.colpick::-webkit-color-swatch-wrapper{padding:0}input.colpick::-webkit-color-swatch{border-radius:50%;border:2px solid var(--line-2)}
 
-#viewer{flex:1;overflow:auto;position:relative;touch-action:pan-x pan-y}
-#pages{padding:10px 8px 80px;display:flex;flex-direction:column;align-items:center;gap:10px;min-width:min-content;transform-origin:0 0}
-.page{position:relative;background:#fff;box-shadow:0 1px 4px rgba(20,35,43,.25);flex:none}
-.page canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+/* ---------- area di lavoro ---------- */
+#work{flex:1;display:flex;min-height:0;position:relative}
+#side{flex:none;width:172px;background:var(--surface);border-right:1px solid var(--line);overflow-y:auto;padding:12px 10px 90px;display:none;scrollbar-width:thin}
+body.side.doc #side{display:block}
+body:not(.doc) #tools{display:none}
+@media (max-width:719px){body.doc .brand img{display:none}}
+@media (max-width:899px){ body.side.doc #side{position:absolute;inset:0 auto 0 0;z-index:7;box-shadow:var(--shadow-3);animation:slin .2s var(--ease)} }
+@keyframes slin{from{transform:translateX(-30px);opacity:0}}
+.sth{display:block;width:100%;margin:0 0 12px;padding:6px;border-radius:12px;border:2px solid transparent;text-align:center;transition:border-color .15s,background .15s}
+.sth:hover{background:var(--surface-2)}
+.sth.cur{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 7%,var(--surface))}
+.sth canvas,.sth .ph{display:block;margin:0 auto;background:#fff;box-shadow:var(--shadow-1);border-radius:3px}
+.sth span{display:block;margin-top:5px;font-size:12px;font-weight:600;color:var(--muted)}
+.sth.cur span{color:var(--acc)}
+
+#viewer{flex:1;overflow:auto;position:relative;touch-action:pan-x pan-y;background:var(--viewer)}
+#pages{padding:16px 10px 110px;display:flex;flex-direction:column;align-items:center;gap:16px;min-width:min-content;transform-origin:0 0}
+.page{position:relative;background:#fff;box-shadow:var(--page-shadow);flex:none;border-radius:2px}
+.page canvas{position:absolute;inset:0;width:100%;height:100%;display:block;border-radius:2px}
 .page svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
 .page svg.draw{pointer-events:all;touch-action:none;cursor:crosshair}
-.page .num{position:absolute;right:6px;bottom:-9px;font-size:10px;color:var(--mute);background:var(--paper);padding:0 5px;border-radius:6px;pointer-events:none;z-index:2}
+.page .num{position:absolute;left:50%;bottom:-14px;transform:translateX(-50%);font-size:10.5px;font-weight:600;color:var(--muted);background:var(--viewer);padding:0 7px;border-radius:8px;pointer-events:none;z-index:2}
+.page .load{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+.page .load::after{content:"";width:26px;height:26px;border-radius:50%;border:3px solid #e2e4f0;border-top-color:var(--brand);animation:spin .8s linear infinite}
 .ann{pointer-events:all;cursor:pointer}
 svg.draw .ann{pointer-events:none}
 .ann.sel,.ann.sel *{touch-action:none;cursor:move}
-.selbox{fill:none;stroke:#1a73e8;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;stroke-width:1.5;pointer-events:none}
-.handle{fill:#1a73e8;stroke:#fff;vector-effect:non-scaling-stroke;stroke-width:2;pointer-events:all;touch-action:none;cursor:nwse-resize}
+.ann .hitw{stroke:transparent;fill:none}
+.selbox{fill:rgba(37,99,235,.05);stroke:var(--sel);stroke-dasharray:5 3;vector-effect:non-scaling-stroke;stroke-width:1.5;pointer-events:none}
+.handle{fill:#fff;stroke:var(--sel);vector-effect:non-scaling-stroke;stroke-width:2;pointer-events:all;touch-action:none;cursor:nwse-resize}
 .handle[data-c=ne],.handle[data-c=sw]{cursor:nesw-resize}
+.hhit{fill:transparent;pointer-events:all;touch-action:none;cursor:nwse-resize}
+.hhit[data-c=ne],.hhit[data-c=sw]{cursor:nesw-resize}
 .delx,.delx *{pointer-events:all;touch-action:none;cursor:pointer}
 .hit{fill:#ffb300;opacity:.45;pointer-events:none}
+.hit.cur{fill:#ff6a00;opacity:.55}
 .forms{position:absolute;inset:0;pointer-events:none}
-.forms>*{position:absolute;pointer-events:auto;margin:0;border:1px solid #7aa7d8;background:rgba(225,238,255,.92);color:#000;padding:0 2px;font-family:Arial,Helvetica,sans-serif;border-radius:0;min-width:0}
+.forms>*{position:absolute;pointer-events:auto;margin:0;border:1px solid #7aa7d8;background:rgba(225,238,255,.92);color:#000;padding:0 2px;font-family:Arial,Helvetica,sans-serif;border-radius:0;min-width:0;color-scheme:light}
 .forms textarea{resize:none}
-.forms input[type=checkbox],.forms input[type=radio]{padding:0;accent-color:var(--bar)}
+.forms input[type=checkbox],.forms input[type=radio]{padding:0;accent-color:var(--brand)}
 body.drawing .forms>*{pointer-events:none}
+body.drop #viewer{outline:3px dashed var(--acc);outline-offset:-10px}
 
-#empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center}
-#empty h1{margin:0;font-size:26px;letter-spacing:-.01em}
-#empty p{margin:0;color:var(--mute);max-width:34ch;line-height:1.45}
-#empty .big{padding:16px 28px;border-radius:12px;background:var(--acc);color:#fff;font-size:18px;font-weight:700}
-#empty .conv{color:var(--bar2);font-size:14px;font-weight:600;text-decoration:none;padding:8px 12px;border-radius:8px}
-#empty .conv:hover{background:#e2e4f3;text-decoration:underline}
-#empty .ver{font-size:12px;color:var(--mute);margin-top:10px}
-body.drop #viewer{outline:3px dashed var(--acc);outline-offset:-8px}
+/* ---------- schermata iniziale ---------- */
+#empty{position:absolute;inset:0;overflow:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(20px,6vh,64px) 18px 40px;text-align:center;
+  background:radial-gradient(circle at 15% 0%,rgba(124,58,237,.16),transparent 45%),radial-gradient(circle at 100% 20%,rgba(239,51,64,.13),transparent 40%),var(--viewer)}
+#empty .hero-ico{width:92px;height:92px;border-radius:26px;box-shadow:0 18px 40px -14px rgba(49,46,129,.6);animation:float 5s ease-in-out infinite}
+@keyframes float{50%{transform:translateY(-6px)}}
+#empty h1{margin:16px 0 6px;font-size:clamp(26px,5vw,34px);letter-spacing:-.03em;line-height:1.1}
+#empty h1 b{background:var(--acc-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+#empty .lead{margin:0;color:var(--muted);max-width:44ch;line-height:1.5}
+#drop{margin:22px auto 0;width:min(560px,100%);border:2px dashed var(--line-2);border-radius:var(--r-l);padding:22px 16px;background:color-mix(in srgb,var(--surface) 70%,transparent);
+  display:flex;flex-direction:column;align-items:center;gap:10px;transition:border-color .2s,background .2s}
+#drop:hover{border-color:var(--acc)}
+.big{display:inline-flex;align-items:center;gap:10px;padding:15px 28px;border-radius:16px;background:var(--acc-grad);color:#fff;font-size:17px;font-weight:750;box-shadow:0 14px 30px -12px rgba(239,51,64,.8);transition:transform .15s,box-shadow .15s}
+.big:hover{transform:translateY(-2px);box-shadow:0 18px 36px -12px rgba(239,51,64,.9)}
+.big .ico{width:22px;height:22px}
+#drop small{color:var(--muted);font-size:13px}
+.feat{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;width:min(760px,100%);margin:24px auto 0}
+.feat div{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);padding:12px;text-align:left;display:flex;gap:10px;align-items:flex-start;box-shadow:var(--shadow-1)}
+.feat .fi{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;color:#fff;flex:none}
+.feat .fi .ico{width:19px;height:19px}
+.feat b{display:block;font-size:13.5px}
+.feat span{display:block;font-size:12px;color:var(--muted);line-height:1.35;margin-top:2px}
+#recent{width:min(760px,100%);margin:26px auto 0;text-align:left}
+#recent h2{font-size:14px;margin:0 0 8px;color:var(--muted);display:flex;align-items:center;gap:8px;text-transform:uppercase;letter-spacing:.06em}
+#recent h2 button{margin-left:auto;font-size:12px;text-transform:none;letter-spacing:0;color:var(--muted);text-decoration:underline}
+.rec{display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;margin-bottom:8px;border-radius:var(--r-m);background:var(--surface);border:1px solid var(--line);text-align:left;box-shadow:var(--shadow-1);transition:border-color .15s,transform .15s}
+.rec:hover{border-color:var(--acc);transform:translateY(-1px)}
+.rec .ri{width:36px;height:44px;border-radius:6px;background:var(--acc-grad);color:#fff;display:grid;place-items:center;font-size:10px;font-weight:800;flex:none}
+.rec .rt{flex:1;min-width:0}
+.rec .rt b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rec .rt small{color:var(--muted);font-size:12px}
+.rec .rx{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;color:var(--muted);flex:none}
+.rec .rx:hover{background:var(--surface-2);color:var(--err)}
+.links{margin-top:22px;display:flex;flex-wrap:wrap;justify-content:center;gap:10px}
+.pill-link{display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:999px;background:var(--surface);border:1px solid var(--line);color:var(--text);font-size:13.5px;font-weight:600;text-decoration:none;box-shadow:var(--shadow-1)}
+.pill-link:hover{border-color:var(--brand-2);color:var(--brand-2)}
+.pill-link .ico{width:17px;height:17px}
+.privacy{margin-top:18px;display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ok);font-weight:600}
+.privacy .ico{width:17px;height:17px}
+#empty .ver{font-size:11.5px;color:var(--muted);margin-top:10px;opacity:.8}
 
-#zoom{position:fixed;right:10px;bottom:calc(12px + env(safe-area-inset-bottom));display:none;gap:4px;background:var(--bar);border-radius:10px;padding:4px;box-shadow:0 2px 8px rgba(0,0,0,.3);z-index:5}
-#zoom.on{display:flex}
-#zoom button{width:38px;height:36px;border-radius:7px;color:#fff;font-size:18px;font-weight:700}
-#zoom button.w{width:auto;padding:0 10px;font-size:12px;font-weight:600}
-#zoom button:active{background:var(--bar2)}
-#pginfo{position:fixed;left:10px;bottom:calc(14px + env(safe-area-inset-bottom));background:rgba(20,35,43,.8);color:#fff;font-size:12px;padding:6px 10px;border-radius:8px;display:none;z-index:5}
-#pginfo.on{display:block}
+/* ---------- comandi flottanti: pagina e zoom ---------- */
+.float{position:absolute;bottom:calc(14px + env(safe-area-inset-bottom));z-index:5;display:none;align-items:center;gap:2px;padding:4px;border-radius:14px;
+  background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--line);box-shadow:var(--shadow-2)}
+.float.on{display:flex}
+.float button{height:36px;min-width:36px;border-radius:10px;display:grid;place-items:center;color:var(--text);font-weight:700;font-size:13px}
+.float button:hover{background:var(--surface-2)}
+.float button:active{background:var(--surface-3)}
+.float button:disabled{opacity:.35}
+.float .ico{width:18px;height:18px}
+#nav{left:12px}
+#nav input{width:40px;height:32px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--text);text-align:center;font:inherit;font-size:13px;font-weight:700;-moz-appearance:textfield}
+#nav input::-webkit-inner-spin-button{display:none}
+#nav .tot{font-size:13px;color:var(--muted);padding:0 4px;font-weight:600;white-space:nowrap}
+#zoom{right:12px}
+#zPct{padding:0 6px;font-variant-numeric:tabular-nums;min-width:56px!important}
+body.side.doc #nav{left:184px}
+@media (max-width:899px){body.side #nav{left:12px}}
 
-.sheet{position:fixed;inset:0;background:rgba(20,35,43,.5);display:none;align-items:flex-end;justify-content:center;z-index:20}
-.sheet.on{display:flex}
-.sheet .box{background:#fff;width:100%;max-width:760px;max-height:92%;border-radius:16px 16px 0 0;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom)}
-@media(min-width:780px){.sheet{align-items:center}.sheet .box{border-radius:16px;max-height:86%}}
-.sheet header{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
-.sheet header h2{flex:1;margin:0;font-size:17px}
-.sheet .x{padding:8px 12px;border-radius:8px;background:var(--paper);font-weight:600;font-size:14px}
-.sheet .body{padding:12px 14px;overflow:auto;flex:1}
-.sheet .foot{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line)}
-.btn{padding:11px 14px;border-radius:9px;background:var(--paper);font-weight:600;font-size:14px;border:1px solid var(--line)}
-.btn.pri{background:var(--acc);color:#fff;border-color:var(--acc)}
-.btn.del{color:#b3261e}
-.btn:disabled{opacity:.4}
+/* ---------- menu a comparsa ---------- */
+.menu{position:fixed;z-index:30;min-width:230px;max-width:calc(100vw - 20px);padding:6px;border-radius:var(--r-m);background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow-3);display:none;transform-origin:top right}
+.menu.on{display:block;animation:pop .14s var(--ease)}
+@keyframes pop{from{opacity:0;transform:scale(.96) translateY(-4px)}}
+.menu button,.menu a{display:flex;align-items:center;gap:11px;width:100%;padding:10px 11px;border-radius:10px;font-size:14px;font-weight:550;color:var(--text);text-decoration:none;text-align:left}
+.menu button:hover,.menu a:hover{background:var(--surface-2)}
+.menu button:disabled{opacity:.4}
+.menu .ico{color:var(--muted)}
+.menu hr{border:0;border-top:1px solid var(--line);margin:5px 4px}
+.menu kbd{margin-left:auto;font:11px ui-monospace,monospace;color:var(--muted);background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+
+/* ---------- pannelli ---------- */
+.sheet{position:fixed;inset:0;background:rgba(12,11,29,.5);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:none;align-items:flex-end;justify-content:center;z-index:20}
+.sheet.on{display:flex;animation:fade .18s ease-out}
+@keyframes fade{from{opacity:0}}
+.sheet .box{background:var(--surface);width:100%;max-width:780px;max-height:92%;border-radius:22px 22px 0 0;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom);box-shadow:var(--shadow-3)}
+.sheet.on .box{animation:up .24s var(--ease)}
+@keyframes up{from{transform:translateY(40px);opacity:.4}}
+@media(min-width:800px){.sheet{align-items:center}.sheet .box{border-radius:22px;max-height:88%}}
+.sheet header{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.sheet header .hi{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;color:#fff;background:var(--brand-grad);flex:none}
+.sheet header h2{flex:1;margin:0;font-size:17px;letter-spacing:-.01em}
+.sheet .x{width:38px;height:38px;border-radius:11px;background:var(--surface-2);display:grid;place-items:center;color:var(--muted)}
+.sheet .x:hover{color:var(--text)}
+.sheet .body{padding:14px 16px;overflow:auto;flex:1}
+.sheet .foot{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 16px;border-top:1px solid var(--line)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:10px 14px;border-radius:12px;background:var(--surface-2);font-weight:650;font-size:14px;border:1px solid var(--line);transition:background .15s,border-color .15s,transform .1s}
+.btn:hover{border-color:var(--line-2)}
+.btn:active{transform:scale(.97)}
+.btn .ico{width:18px;height:18px}
+.btn.pri{background:var(--acc-grad);color:#fff;border-color:transparent;box-shadow:0 8px 20px -10px rgba(239,51,64,.8)}
+.btn.brand{background:var(--brand-grad);color:#fff;border-color:transparent}
+.btn.del{color:var(--err)}
+.btn:disabled{opacity:.4;pointer-events:none}
 .grow{flex:1}
+.pinfo{font-size:13px;color:var(--muted);font-weight:600}
 
-#thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:12px}
-.th{position:relative;border:2px solid var(--line);border-radius:8px;padding:6px 6px 22px;background:#fafbfb;text-align:center}
-.th canvas{max-width:100%;max-height:150px;box-shadow:0 0 0 1px var(--line);background:#fff}
-.th span{position:absolute;left:0;right:0;bottom:3px;font-size:12px;color:var(--mute)}
-.th[aria-pressed="true"]{border-color:var(--acc);background:#fff2ec}
-.th[aria-pressed="true"] span{color:var(--acc-d);font-weight:700}
-.th .grip{position:absolute;top:-2px;right:-2px;width:34px;height:34px;line-height:34px;font-style:normal;font-size:18px;color:#fff;background:var(--bar);border-radius:0 6px 0 10px;touch-action:none;cursor:grab}
-.th.drag{opacity:.55;border-style:dashed;border-color:var(--bar)}
+#thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:14px}
+.th{position:relative;border:2px solid var(--line);border-radius:12px;padding:8px 8px 26px;background:var(--surface-2);text-align:center;transition:border-color .15s,background .15s,transform .15s}
+.th:hover{border-color:var(--line-2)}
+.th canvas{max-width:100%;max-height:150px;box-shadow:var(--shadow-1);background:#fff;border-radius:2px}
+.th span{position:absolute;left:0;right:0;bottom:5px;font-size:12px;font-weight:600;color:var(--muted)}
+.th[aria-pressed="true"]{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 8%,var(--surface))}
+.th[aria-pressed="true"] span{color:var(--acc)}
+.th[aria-pressed="true"]::before{content:"✓";position:absolute;left:6px;top:6px;width:22px;height:22px;border-radius:50%;background:var(--acc);color:#fff;font-size:13px;font-weight:800;display:grid;place-items:center;z-index:1}
+.th .grip{position:absolute;top:-2px;right:-2px;width:34px;height:34px;display:grid;place-items:center;font-style:normal;font-size:18px;color:#fff;background:var(--brand-grad);border-radius:0 10px 0 12px;touch-action:none;cursor:grab}
+.th.drag{opacity:.55;border-style:dashed;border-color:var(--brand)}
 
-label.f{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
-textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink)}
+label.f{display:block;font-size:13px;font-weight:600;color:var(--muted);margin:12px 0 5px}
+textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:11px 12px;border:1px solid var(--line-2);border-radius:12px;background:var(--surface);color:var(--text);transition:border-color .15s,box-shadow .15s}
+textarea.in:focus,input.in:focus,select.in:focus{outline:0;border-color:var(--brand-2);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand-2) 22%,transparent)}
 .row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
 .row>div{flex:1;min-width:110px}
-.chk{display:flex;align-items:center;gap:8px;font-size:15px;padding:10px 0}
-.chk input{width:20px;height:20px}
-.res{display:block;width:100%;text-align:left;padding:10px;border-bottom:1px solid var(--line);font-size:14px}
-.res b{color:var(--acc-d)}
-.res small{color:var(--mute);display:block}
-#sigpad{width:100%;height:200px;border:2px dashed var(--line);border-radius:10px;touch-action:none;background:#fff;display:block}
+.chk{display:flex;align-items:center;gap:9px;font-size:15px;padding:10px 0}
+.chk input{width:20px;height:20px;accent-color:var(--brand-2)}
+.res{display:block;width:100%;text-align:left;padding:11px 12px;border-radius:12px;font-size:14px;margin-bottom:4px;transition:background .15s}
+.res:hover{background:var(--surface-2)}
+.res mark{background:#fde68a;color:#000;border-radius:3px;padding:0 1px}
+.res small{color:var(--muted);display:block;font-weight:700;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+.qnav{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--muted)}
+#sigpad{width:100%;height:200px;border:2px dashed var(--line-2);border-radius:14px;touch-action:none;background:#fff;display:block}
 .lib{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
-.lib .it{border:1px solid var(--line);border-radius:10px;padding:8px;background:#fff;display:flex;flex-direction:column;gap:6px;align-items:center}
-.lib .it img{height:54px;max-width:150px;display:block;object-fit:contain;cursor:pointer}
+.lib .it{border:1px solid var(--line);border-radius:14px;padding:8px;background:var(--surface-2);display:flex;flex-direction:column;gap:7px;align-items:center}
+.lib .it img{height:58px;max-width:160px;display:block;object-fit:contain;cursor:pointer;background:#fff;border-radius:8px;padding:3px}
 .itb{display:flex;gap:6px}
-.btn.sm{padding:7px 10px;font-size:13px}
+.btn.sm{padding:7px 10px;font-size:13px;border-radius:10px}
 .qsl{display:flex;flex-wrap:wrap;gap:14px 12px;padding:10px 4px 6px}
-.qs{border:3px double currentColor;padding:7px 12px;font-weight:800;font-size:14px;letter-spacing:.02em;transform:rotate(-6deg);background:#fff;border-radius:2px}
-.note{font-size:13px;color:var(--mute);line-height:1.45}
-#toast{position:fixed;left:50%;bottom:calc(64px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;max-width:90vw;display:none;z-index:40;text-align:center;pointer-events:none}
-#toast.on{display:block}
-#busy{position:fixed;inset:0;background:rgba(255,255,255,.7);display:none;align-items:center;justify-content:center;z-index:50;font-weight:600}
-#busy.on{display:flex}
-@media(prefers-reduced-motion:no-preference){.sheet .box{animation:up .18s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}}}
+.qs{border:3px double currentColor;padding:7px 12px;font-weight:800;font-size:14px;letter-spacing:.02em;transform:rotate(-5deg);background:#fff;border-radius:3px;transition:transform .15s}
+.qs:hover{transform:rotate(-2deg) scale(1.05)}
+.note{font-size:13px;color:var(--muted);line-height:1.5}
+.prev{margin-top:12px;padding:14px;border-radius:12px;background:#fff;border:1px solid var(--line);min-height:54px;overflow:hidden;color-scheme:light;white-space:pre-wrap;word-break:break-word}
+.cols{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:3px;gap:2px}
+.seg button{padding:7px 12px;border-radius:9px;font-size:13px;font-weight:650;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--text);box-shadow:var(--shadow-1)}
+.keys{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13.5px;margin:6px 0 0}
+.keys kbd{font:12px ui-monospace,monospace;background:var(--surface-2);border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;padding:2px 6px;white-space:nowrap;justify-self:start}
+
+/* ---------- messaggi e attesa ---------- */
+#toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translate(-50%,20px);opacity:0;z-index:40;pointer-events:none;
+  display:flex;align-items:center;gap:10px;max-width:min(92vw,520px);padding:11px 16px 11px 12px;border-radius:14px;background:#17153a;color:#fff;font-size:14px;font-weight:550;line-height:1.35;box-shadow:var(--shadow-3);
+  transition:opacity .2s,transform .25s var(--ease)}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+#toast .ti{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:none;background:rgba(255,255,255,.14)}
+#toast .ti .ico{width:16px;height:16px}
+#toast.ok .ti{background:var(--ok)} #toast.err .ti{background:var(--err)} #toast.warn .ti{background:var(--warn)}
+:root[data-theme="dark"] #toast{background:#2c2958}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) #toast{background:#2c2958}}
+#busy{position:fixed;inset:0;background:rgba(12,11,29,.42);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);display:none;align-items:center;justify-content:center;z-index:50}
+#busy.on{display:flex;animation:fade .2s}
+#busy .card{background:var(--surface);color:var(--text);border-radius:18px;padding:20px 22px;min-width:min(300px,86vw);max-width:86vw;box-shadow:var(--shadow-3);display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
+.spin{width:38px;height:38px;border-radius:50%;border:4px solid var(--surface-3);border-top-color:var(--acc);border-right-color:var(--brand-2);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#busyMsg{font-weight:650;font-size:15px}
+.bar{width:100%;height:7px;border-radius:99px;background:var(--surface-3);overflow:hidden}
+.bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--acc-grad);transition:width .2s}
+#busyBar[hidden]{display:none}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 #stampa{display:none}
 @media print{body>*:not(#stampa){display:none!important}#stampa{display:block}#stampa img{display:block;width:100%;height:auto;break-after:page;page-break-after:always}#stampa img:last-child{break-after:auto;page-break-after:auto}}
 </style>
 </head>
 <body>
+<!-- icone (disegnate a tratto, riusate in tutta l'app) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5.5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="18.5" r="2.6"/><path d="m8.4 13.3 7.2 4M15.6 6.8l-7.2 4"/></symbol>
+  <symbol id="i-print" viewBox="0 0 24 24"><path d="M7 8V3.5h10V8"/><rect x="3" y="8" width="18" height="9" rx="2.2"/><path d="M7 14h10v6.5H7z"/></symbol>
+  <symbol id="i-conv" viewBox="0 0 24 24"><path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2m0 15v2M2.5 12h2m15 0h2M5.3 5.3l1.4 1.4m10.6 10.6 1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M5.5 3.5 11 20l2.4-6.6L20 11z"/></symbol>
+  <symbol id="i-hl" viewBox="0 0 24 24"><path d="m14.5 4.5 5 5L11 18H6v-5z"/><path d="M4 21h16"/></symbol>
+  <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 7V4.5h14V7M12 4.5v15M9 19.5h6"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M5 4h14v10.5L13.5 20H5z"/><path d="M13.5 20v-5.5H19M8.5 9h7M8.5 12.5h4"/></symbol>
+  <symbol id="i-ink" viewBox="0 0 24 24"><path d="M3 18c2.5-5 5-7.5 7-6.5s.5 5 3 5.5 4.5-4.5 8-6"/></symbol>
+  <symbol id="i-shape" viewBox="0 0 24 24"><rect x="3" y="3.5" width="10" height="10" rx="1.5"/><circle cx="16" cy="16" r="5"/></symbol>
+  <symbol id="i-fix" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
+  <symbol id="i-erase" viewBox="0 0 24 24"><path d="M20 20H9l-4.6-4.6a2 2 0 0 1 0-2.8l8.2-8.2a2 2 0 0 1 2.8 0l4.2 4.2a2 2 0 0 1 0 2.8L11.5 20"/><path d="m8.5 9.5 6 6"/></symbol>
+  <symbol id="i-white" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h5M7 14h3"/></symbol>
+  <symbol id="i-sign" viewBox="0 0 24 24"><path d="M3 16c2-3 3.5-8.5 5.5-8.5S8 16 10 16s2.5-4 4-4 1 3 3 3 2.5-1.5 4-2"/><path d="M3 20.5h18"/></symbol>
+  <symbol id="i-stamp" viewBox="0 0 24 24"><path d="M5 21h14M5 17.5h14l-1-4H6zM9.6 13.5l.6-4.2a2.4 2.4 0 1 1 3.6 0l.6 4.2"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="9.5" r="2"/><path d="m21 15.5-5-5L6 20"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></symbol>
+  <symbol id="i-pages" viewBox="0 0 24 24"><rect x="4" y="3" width="12" height="15" rx="2"/><path d="M8 21h9.5a2.5 2.5 0 0 0 2.5-2.5V7"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+  <symbol id="i-side" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16M5.5 8h1.5M5.5 11h1.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.6v.1"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.4v.1"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="m5 15 7-7 7 7"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m5 9 7 7 7-7"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/></symbol>
+  <symbol id="i-rot" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v5h-5"/></symbol>
+  <symbol id="i-rotl" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v5h5"/></symbol>
+  <symbol id="i-blank" viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5M12.5 11.5v6M9.5 14.5h6"/></symbol>
+  <symbol id="i-extract" viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5M12.5 17.5v-6M9.5 14.5l3-3 3 3"/></symbol>
+  <symbol id="i-go" viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4.5 6v6c0 4.3 3.2 8 7.5 9 4.3-1 7.5-4.7 7.5-9V6z"/><path d="m8.8 12 2.3 2.3 4.3-4.6"/></symbol>
+  <symbol id="i-keys" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6 10h.1M9.5 10h.1M13 10h.1M16.5 10h1M7 14h10"/></symbol>
+  <symbol id="i-rename" viewBox="0 0 24 24"><path d="M4 7V5h11v2M9.5 5v14M7 19h5M15 13h6M18 10v9"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/></symbol>
+</svg>
+
 <div id="top">
-  <button class="tb" id="bOpen">Apri</button>
-  <div class="name" id="docName">ninetto-pdf</div>
+  <button class="tb icon solo-pc" id="bSide" title="Miniature delle pagine" aria-label="Mostra o nascondi le miniature" hidden><svg class="ico"><use href="#i-side"/></svg></button>
+  <div class="brand">
+    <img src="icons/icon.svg" alt="" width="34" height="34">
+    <div class="tt">
+      <div id="docName"><span class="logo-name">ninetto<b>-pdf</b></span></div>
+      <div id="docMeta">Editor PDF · tutto sul tuo dispositivo</div>
+    </div>
+  </div>
+  <button class="tb" id="bOpen" title="Apri un PDF (Ctrl+O)"><svg class="ico"><use href="#i-open"/></svg><span class="lbl">Apri</span></button>
   <!-- Collegamento a ninetto-converter (si apre in una nuova scheda) -->
-  <a class="tb conv" id="bConv" href="https://dipierronino-hub.github.io/ninetto-converter/" target="_blank" rel="noopener" title="Converti file con ninetto-converter" aria-label="Converti file con ninetto-converter">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span>Converti</span>
+  <a class="tb conv solo-pc" id="bConv" href="https://dipierronino-hub.github.io/ninetto-converter/" target="_blank" rel="noopener" title="Converti file con ninetto-converter" aria-label="Converti file con ninetto-converter">
+    <svg class="ico" aria-hidden="true"><use href="#i-conv"/></svg><span class="lbl">Converti</span>
   </a>
-  <button class="tb" id="bPrint" disabled title="Stampa (Ctrl+P)" aria-label="Stampa">🖨</button>
-  <button class="tb" id="bShare" disabled>Condividi</button>
-  <button class="tb pri" id="bSave" disabled>Salva</button>
+  <button class="tb icon solo-pc" id="bPrint" disabled title="Stampa (Ctrl+P)" aria-label="Stampa"><svg class="ico"><use href="#i-print"/></svg></button>
+  <button class="tb" id="bShare" disabled title="Condividi"><svg class="ico"><use href="#i-share"/></svg><span class="lbl">Condividi</span></button>
+  <button class="tb pri" id="bSave" disabled title="Salva (Ctrl+S)"><svg class="ico"><use href="#i-save"/></svg><span class="lbl">Salva</span><i class="badge" id="dirtyDot" hidden></i></button>
+  <button class="tb icon" id="bMore" title="Altre azioni" aria-label="Altre azioni" aria-haspopup="menu"><svg class="ico"><use href="#i-more"/></svg></button>
 </div>
 
 <div id="tools" role="toolbar" aria-label="Strumenti">
-  <button class="tool" data-tool="mano" aria-pressed="true">Scorri</button>
-  <button class="tool" data-tool="hl">Evidenzia</button>
-  <button class="tool" data-tool="text">Testo</button>
-  <button class="tool" data-tool="note">Nota</button>
-  <button class="tool" data-tool="ink">Disegna</button>
-  <button class="tool" data-tool="cover">Correggi</button>
-  <button class="tool" data-tool="erase">Cancella</button>
-  <button class="tool" data-tool="white">Bianchetto</button>
-  <button class="tool" id="bSign">Firma</button>
-  <button class="tool" id="bStamp">Timbro</button>
+  <button class="tool" data-tool="mano" aria-pressed="true" title="Scorri e seleziona (Esc)"><svg class="ico"><use href="#i-hand"/></svg>Seleziona</button>
   <span class="sep"></span>
-  <button class="tool" id="bUndo" disabled>Annulla</button>
-  <button class="tool" id="bRedo" disabled>Ripeti</button>
+  <button class="tool" data-tool="hl" title="Evidenzia, sottolinea o barra il testo"><svg class="ico"><use href="#i-hl"/></svg>Evidenzia</button>
+  <button class="tool" data-tool="text" title="Scrivi un testo"><svg class="ico"><use href="#i-text"/></svg>Testo</button>
+  <button class="tool" data-tool="note" title="Nota adesiva"><svg class="ico"><use href="#i-note"/></svg>Nota</button>
+  <button class="tool" data-tool="ink" title="Disegno a mano libera"><svg class="ico"><use href="#i-ink"/></svg>Disegna</button>
+  <button class="tool" data-tool="shape" title="Rettangoli, cerchi, linee e frecce"><svg class="ico"><use href="#i-shape"/></svg>Forme</button>
   <span class="sep"></span>
-  <button class="tool" id="bPages">Pagine</button>
-  <button class="tool" id="bFind">Cerca</button>
+  <button class="tool" data-tool="cover" title="Correggi un testo del PDF"><svg class="ico"><use href="#i-fix"/></svg>Correggi</button>
+  <button class="tool" data-tool="erase" title="Cancella scritte o aggiunte"><svg class="ico"><use href="#i-erase"/></svg>Cancella</button>
+  <button class="tool" data-tool="white" title="Copri con un riquadro pieno"><svg class="ico"><use href="#i-white"/></svg>Bianchetto</button>
+  <span class="sep"></span>
+  <button class="tool" id="bSign" title="Firma"><svg class="ico"><use href="#i-sign"/></svg>Firma</button>
+  <button class="tool" id="bStamp" title="Timbri"><svg class="ico"><use href="#i-stamp"/></svg>Timbro</button>
+  <button class="tool" id="bImg" title="Inserisci un'immagine"><svg class="ico"><use href="#i-image"/></svg>Immagine</button>
+  <span class="sep"></span>
+  <button class="tool" id="bUndo" disabled title="Annulla (Ctrl+Z)"><svg class="ico"><use href="#i-undo"/></svg>Annulla</button>
+  <button class="tool" id="bRedo" disabled title="Ripristina (Ctrl+Y)"><svg class="ico"><use href="#i-redo"/></svg>Ripristina</button>
+  <span class="sep"></span>
+  <button class="tool" id="bPages" title="Gestione pagine"><svg class="ico"><use href="#i-pages"/></svg>Pagine</button>
+  <button class="tool" id="bFind" title="Cerca (Ctrl+F)"><svg class="ico"><use href="#i-search"/></svg>Cerca</button>
 </div>
 <div id="opts"></div>
 
-<div id="viewer">
-  <div id="pages"></div>
-  <div id="empty">
-    <img src="icons/icon.svg" alt="" width="84" height="84">
-    <h1>ninetto-pdf</h1>
-    <p>Apri un PDF per leggerlo, annotarlo, firmarlo, riordinare le pagine o correggere un dato.</p>
-    <button class="big" id="bOpen2">Apri PDF</button>
-    <p class="note">I documenti restano su questo dispositivo: non vengono caricati online.</p>
-    <a class="conv" href="https://dipierronino-hub.github.io/ninetto-converter/" target="_blank" rel="noopener">Devi convertire Word, Excel o immagini? Vai a ninetto-converter →</a>
-    <div class="ver" id="ver"></div>
+<div id="work">
+  <aside id="side" aria-label="Miniature delle pagine"></aside>
+  <div id="viewer">
+    <div id="pages"></div>
+    <div id="empty">
+      <img class="hero-ico" src="icons/icon.svg" alt="" width="92" height="92">
+      <h1>ninetto<b>-pdf</b></h1>
+      <p class="lead">Leggi, annota, firma, correggi e riorganizza i tuoi PDF. Veloce, preciso, anche senza connessione.</p>
+      <div id="drop">
+        <button class="big" id="bOpen2"><svg class="ico"><use href="#i-open"/></svg>Apri PDF</button>
+        <small class="solo-pc">oppure trascina qui uno o più file PDF</small>
+      </div>
+      <div class="feat">
+        <div><span class="fi" style="background:linear-gradient(135deg,#f59e0b,#ef4444)"><svg class="ico"><use href="#i-hl"/></svg></span><p style="margin:0"><b>Annota</b><span>Evidenzia, scrivi, disegna, forme e note</span></p></div>
+        <div><span class="fi" style="background:linear-gradient(135deg,#4f46e5,#7c3aed)"><svg class="ico"><use href="#i-sign"/></svg></span><p style="margin:0"><b>Firma e timbra</b><span>Firme salvate, timbri con la data</span></p></div>
+        <div><span class="fi" style="background:linear-gradient(135deg,#0ea5e9,#6366f1)"><svg class="ico"><use href="#i-fix"/></svg></span><p style="margin:0"><b>Correggi</b><span>Cambia o cancella davvero un testo</span></p></div>
+        <div><span class="fi" style="background:linear-gradient(135deg,#10b981,#0d9488)"><svg class="ico"><use href="#i-pages"/></svg></span><p style="margin:0"><b>Pagine</b><span>Riordina, ruota, unisci, estrai</span></p></div>
+      </div>
+      <div id="recent" hidden></div>
+      <div class="links">
+        <a class="pill-link" href="https://dipierronino-hub.github.io/ninetto-converter/" target="_blank" rel="noopener"><svg class="ico"><use href="#i-conv"/></svg>Devi convertire Word, Excel o immagini? Vai a ninetto-converter →</a>
+      </div>
+      <div class="privacy"><svg class="ico"><use href="#i-shield"/></svg>I documenti restano su questo dispositivo: non vengono caricati online.</div>
+      <div class="ver" id="ver"></div>
+    </div>
   </div>
+  <div class="float" id="nav">
+    <button id="nPrev" title="Pagina precedente" aria-label="Pagina precedente"><svg class="ico"><use href="#i-up"/></svg></button>
+    <input id="nNum" type="number" inputmode="numeric" min="1" aria-label="Numero di pagina">
+    <span class="tot" id="nTot">/ 1</span>
+    <button id="nNext" title="Pagina successiva" aria-label="Pagina successiva"><svg class="ico"><use href="#i-down"/></svg></button>
+  </div>
+  <div class="float" id="zoom">
+    <button id="zOut" aria-label="Riduci" title="Riduci (Ctrl −)"><svg class="ico"><use href="#i-minus"/></svg></button>
+    <button id="zPct" title="Livello di zoom" aria-haspopup="menu">100%</button>
+    <button id="zIn" aria-label="Ingrandisci" title="Ingrandisci (Ctrl +)"><svg class="ico"><use href="#i-plus"/></svg></button>
+    <button id="zFit" title="Adatta alla larghezza" aria-label="Adatta alla larghezza"><svg class="ico"><use href="#i-fit"/></svg></button>
+  </div>
+  <div id="pginfo" hidden></div>
 </div>
 
-<div id="pginfo"></div>
-<div id="zoom">
-  <button id="zOut" aria-label="Riduci">−</button>
-  <button id="zFit" class="w">Adatta</button>
-  <button id="zIn" aria-label="Ingrandisci">+</button>
+<!-- menu «altre azioni» -->
+<div class="menu" id="mMore" role="menu">
+  <button data-m="saveas" data-need><svg class="ico"><use href="#i-rename"/></svg>Salva con nome…</button>
+  <button data-m="print" data-need><svg class="ico"><use href="#i-print"/></svg>Stampa<kbd>Ctrl P</kbd></button>
+  <button data-m="add" data-need><svg class="ico"><use href="#i-plus"/></svg>Aggiungi un altro PDF in fondo</button>
+  <a href="https://dipierronino-hub.github.io/ninetto-converter/" target="_blank" rel="noopener"><svg class="ico"><use href="#i-conv"/></svg>Converti con ninetto-converter</a>
+  <hr>
+  <button data-m="theme"><svg class="ico" id="themeIco"><use href="#i-moon"/></svg><span id="themeLbl">Tema scuro</span></button>
+  <button data-m="side" class="solo-pc" data-need><svg class="ico"><use href="#i-side"/></svg>Miniature laterali</button>
+  <button data-m="keys"><svg class="ico"><use href="#i-keys"/></svg>Scorciatoie e informazioni</button>
+  <hr>
+  <button data-m="close" data-need><svg class="ico"><use href="#i-x"/></svg>Chiudi il documento</button>
+</div>
+<!-- menu dello zoom -->
+<div class="menu" id="mZoom" role="menu" style="min-width:200px">
+  <button data-z="width"><svg class="ico"><use href="#i-fit"/></svg>Adatta alla larghezza</button>
+  <button data-z="page"><svg class="ico"><use href="#i-pages"/></svg>Pagina intera</button>
+  <hr>
+  <button data-z="0.75">75%</button><button data-z="1">100%</button><button data-z="1.5">150%</button><button data-z="2">200%</button><button data-z="3">300%</button>
 </div>
 
 <input type="file" id="fOpen" accept="application/pdf,.pdf" multiple hidden>
@@ -198,79 +487,139 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
 
 <!-- Pagine -->
 <div class="sheet" id="shPages"><div class="box">
-  <header><h2>Pagine</h2><button class="x" data-close>Chiudi</button></header>
+  <header><span class="hi"><svg class="ico"><use href="#i-pages"/></svg></span><h2>Pagine</h2><span class="pinfo" id="pSelInfo"></span><button class="x" data-close aria-label="Chiudi"><svg class="ico"><use href="#i-x"/></svg></button></header>
   <div class="body">
     <p class="note" style="margin-top:0">Tocca le pagine per selezionarle. Per cambiare l'ordine trascina la maniglia ⠿. «Aggiungi PDF» inserisce il file dopo la pagina selezionata (o in fondo).</p>
     <div id="thumbs"></div>
   </div>
   <div class="foot">
-    <button class="btn" id="pAll">Tutte</button>
-    <button class="btn" id="pLeft">◀ Sposta</button>
-    <button class="btn" id="pRight">Sposta ▶</button>
-    <button class="btn" id="pRot">Ruota</button>
-    <button class="btn del" id="pDel">Elimina</button>
-    <button class="btn" id="pExt">Estrai in nuovo PDF</button>
-    <button class="btn" id="pGo">Vai alla pagina</button>
-    <button class="btn pri" id="pAdd">Aggiungi PDF</button>
+    <button class="btn" id="pAll"><svg class="ico"><use href="#i-check"/></svg>Tutte</button>
+    <button class="btn" id="pLeft" data-sel><svg class="ico"><use href="#i-left"/></svg>Sposta</button>
+    <button class="btn" id="pRight" data-sel>Sposta<svg class="ico"><use href="#i-right"/></svg></button>
+    <button class="btn" id="pRotL" data-sel title="Ruota a sinistra"><svg class="ico"><use href="#i-rotl"/></svg></button>
+    <button class="btn" id="pRot" data-sel><svg class="ico"><use href="#i-rot"/></svg>Ruota</button>
+    <button class="btn" id="pDup" data-sel><svg class="ico"><use href="#i-copy"/></svg>Duplica</button>
+    <button class="btn" id="pBlank"><svg class="ico"><use href="#i-blank"/></svg>Pagina bianca</button>
+    <button class="btn del" id="pDel" data-sel><svg class="ico"><use href="#i-trash"/></svg>Elimina</button>
+    <button class="btn" id="pExt" data-sel><svg class="ico"><use href="#i-extract"/></svg>Estrai in nuovo PDF</button>
+    <button class="btn" id="pGo" data-sel><svg class="ico"><use href="#i-go"/></svg>Vai alla pagina</button>
+    <span class="grow"></span>
+    <button class="btn pri" id="pAdd"><svg class="ico"><use href="#i-plus"/></svg>Aggiungi PDF</button>
   </div>
 </div></div>
 
 <!-- Cerca -->
 <div class="sheet" id="shFind"><div class="box">
-  <header><h2>Cerca nel documento</h2><button class="x" data-close>Chiudi</button></header>
+  <header><span class="hi"><svg class="ico"><use href="#i-search"/></svg></span><h2>Cerca nel documento</h2><button class="x" data-close aria-label="Chiudi"><svg class="ico"><use href="#i-x"/></svg></button></header>
   <div class="body">
-    <div class="row"><div><input class="in" id="q" type="search" placeholder="Parola o numero da cercare" enterkeyhint="search"></div><button class="btn pri" id="qGo" style="flex:none">Cerca</button></div>
-    <div id="qRes" style="margin-top:8px"></div>
+    <div class="row"><div><input class="in" id="q" type="search" placeholder="Parola o numero da cercare" enterkeyhint="search"></div><button class="btn brand" id="qGo" style="flex:none;height:46px"><svg class="ico"><use href="#i-search"/></svg>Cerca</button></div>
+    <div id="qRes" style="margin-top:10px"></div>
   </div>
 </div></div>
 
 <!-- Testo -->
 <div class="sheet" id="shText"><div class="box">
-  <header><h2 id="txTitle">Testo</h2><button class="x" data-close>Annulla</button></header>
+  <header><span class="hi"><svg class="ico"><use href="#i-text"/></svg></span><h2 id="txTitle">Testo</h2><button class="x" data-close aria-label="Annulla"><svg class="ico"><use href="#i-x"/></svg></button></header>
   <div class="body">
     <p class="note" id="txNote" style="margin-top:0"></p>
-    <textarea class="in" id="txVal" rows="3"></textarea>
+    <textarea class="in" id="txVal" rows="3" placeholder="Scrivi qui il testo"></textarea>
     <div class="row">
       <div><label class="f" for="txSize">Dimensione</label><input class="in" id="txSize" type="number" min="4" max="120" step="0.5"></div>
       <div><label class="f" for="txFont">Carattere</label><select class="in" id="txFont"><option value="H">Arial / Helvetica</option><option value="T">Times</option><option value="C">Courier</option></select></div>
     </div>
     <label class="chk"><input type="checkbox" id="txBold"> Grassetto</label>
-    <div class="row" style="align-items:center"><span class="note">Colore</span>
-      <button class="sw" data-c="#000000" style="background:#000"></button>
-      <button class="sw" data-c="#1a3fb0" style="background:#1a3fb0"></button>
-      <button class="sw" data-c="#c62828" style="background:#c62828"></button>
-      <button class="sw" data-c="#1c7c54" style="background:#1c7c54"></button>
+    <div class="cols" id="txCols"><span class="note">Colore</span>
+      <button class="sw" data-c="#000000" style="background:#000" aria-label="Nero"></button>
+      <button class="sw" data-c="#1a3fb0" style="background:#1a3fb0" aria-label="Blu"></button>
+      <button class="sw" data-c="#c62828" style="background:#c62828" aria-label="Rosso"></button>
+      <button class="sw" data-c="#1c7c54" style="background:#1c7c54" aria-label="Verde"></button>
+      <button class="sw" data-c="#7c3aed" style="background:#7c3aed" aria-label="Viola"></button>
+      <button class="sw" data-c="#ea580c" style="background:#ea580c" aria-label="Arancio"></button>
+      <input type="color" class="colpick" id="txCustom" value="#000000" aria-label="Altro colore" title="Altro colore">
     </div>
+    <div class="prev" id="txPrev" aria-hidden="true"></div>
   </div>
-  <div class="foot"><span class="grow"></span><button class="btn pri" id="txOk">Conferma</button></div>
+  <div class="foot"><span class="note">Invio + Ctrl per confermare</span><span class="grow"></span><button class="btn" data-close>Annulla</button><button class="btn pri" id="txOk"><svg class="ico"><use href="#i-check"/></svg>Conferma</button></div>
 </div></div>
 
 <!-- Firma -->
 <div class="sheet" id="shSign"><div class="box">
-  <header><h2>Firma</h2><button class="x" data-close>Chiudi</button></header>
+  <header><span class="hi"><svg class="ico"><use href="#i-sign"/></svg></span><h2>Firma</h2><button class="x" data-close aria-label="Chiudi"><svg class="ico"><use href="#i-x"/></svg></button></header>
   <div class="body">
     <p class="note" style="margin-top:0">Scegli una firma o una sigla salvata (fino a 3), oppure disegnane una nuova qui sotto. <b id="sigCount"></b></p>
     <div class="lib" id="sigLib"></div>
-    <label class="f">Nuova firma</label>
-    <canvas id="sigpad"></canvas>
+    <div class="row" style="align-items:center;justify-content:space-between;margin-top:12px">
+      <label class="f" style="margin:0">Nuova firma</label>
+      <div class="cols">
+        <div class="seg" id="sigCol"><button data-c="#10226b" aria-pressed="true">Blu</button><button data-c="#111111">Nero</button></div>
+        <div class="seg" id="sigW"><button data-w="1.8">Fine</button><button data-w="2.6" aria-pressed="true">Medio</button><button data-w="3.8">Grosso</button></div>
+      </div>
+    </div>
+    <canvas id="sigpad" style="margin-top:8px"></canvas>
+    <p class="note" style="margin:8px 0 0">Hai la firma su carta? <button class="btn sm" id="sigImp" style="margin-left:4px"><svg class="ico"><use href="#i-image"/></svg>Importa da foto</button> — lo sfondo bianco diventa trasparente.</p>
   </div>
-  <div class="foot"><button class="btn" id="sigClr">Cancella</button><span class="grow"></span><button class="btn pri" id="sigOk">Salva e usa</button></div>
+  <div class="foot"><button class="btn" id="sigClr"><svg class="ico"><use href="#i-trash"/></svg>Cancella</button><button class="btn" id="sigBack"><svg class="ico"><use href="#i-undo"/></svg>Togli ultimo tratto</button><span class="grow"></span><button class="btn pri" id="sigOk"><svg class="ico"><use href="#i-check"/></svg>Salva e usa</button></div>
 </div></div>
 
 <!-- Timbro -->
 <div class="sheet" id="shStamp"><div class="box">
-  <header><h2>Timbri</h2><button class="x" data-close>Chiudi</button></header>
+  <header><span class="hi"><svg class="ico"><use href="#i-stamp"/></svg></span><h2>Timbri</h2><button class="x" data-close aria-label="Chiudi"><svg class="ico"><use href="#i-x"/></svg></button></header>
   <div class="body">
     <label class="f" style="margin-top:0">Timbri rapidi (con la data di oggi)</label>
     <div class="qsl" id="qsLib"></div>
+    <label class="f">Timbro personalizzato</label>
+    <div class="row">
+      <div style="flex:3"><input class="in" id="csText" maxlength="40" placeholder="Es. RICEVUTO, VISTO, DA PAGARE"></div>
+      <button class="btn brand" id="csAdd" style="flex:none;height:46px"><svg class="ico"><use href="#i-plus"/></svg>Inserisci</button>
+    </div>
+    <div class="cols" style="margin-top:8px">
+      <div class="seg" id="csCol"><button data-c="#c62828" aria-pressed="true">Rosso</button><button data-c="#1a3fb0">Blu</button><button data-c="#1c7c54">Verde</button><button data-c="#111111">Nero</button></div>
+      <label class="chk" style="padding:0"><input type="checkbox" id="csDate" checked> Aggiungi la data di oggi</label>
+    </div>
     <label class="f">Le tue immagini (timbro aziendale, logo…)</label>
     <div class="lib" id="stLib"></div>
+    <label class="chk"><input type="checkbox" id="stTrasp" checked> Rendi trasparente lo sfondo bianco delle nuove immagini</label>
   </div>
-  <div class="foot"><span class="grow"></span><button class="btn pri" id="stAdd">Carica immagine</button></div>
+  <div class="foot"><span class="grow"></span><button class="btn pri" id="stAdd"><svg class="ico"><use href="#i-image"/></svg>Carica immagine</button></div>
 </div></div>
 
-<div id="toast" role="status"></div>
-<div id="busy">Un momento…</div>
+<!-- Salva con nome -->
+<div class="sheet" id="shName"><div class="box" style="max-width:520px">
+  <header><span class="hi"><svg class="ico"><use href="#i-rename"/></svg></span><h2>Salva con nome</h2><button class="x" data-close aria-label="Chiudi"><svg class="ico"><use href="#i-x"/></svg></button></header>
+  <div class="body">
+    <label class="f" for="nmVal" style="margin-top:0">Nome del file</label>
+    <div class="row" style="align-items:center"><div><input class="in" id="nmVal" autocomplete="off"></div><span class="note" style="flex:none">.pdf</span></div>
+  </div>
+  <div class="foot"><span class="grow"></span><button class="btn" data-close>Annulla</button><button class="btn pri" id="nmOk"><svg class="ico"><use href="#i-save"/></svg>Salva</button></div>
+</div></div>
+
+<!-- Scorciatoie e informazioni -->
+<div class="sheet" id="shKeys"><div class="box" style="max-width:560px">
+  <header><span class="hi"><svg class="ico"><use href="#i-keys"/></svg></span><h2>Scorciatoie e informazioni</h2><button class="x" data-close aria-label="Chiudi"><svg class="ico"><use href="#i-x"/></svg></button></header>
+  <div class="body">
+    <div class="keys">
+      <kbd>Ctrl O</kbd><span>Apri un PDF</span>
+      <kbd>Ctrl S</kbd><span>Salva</span>
+      <kbd>Ctrl P</kbd><span>Stampa</span>
+      <kbd>Ctrl F</kbd><span>Cerca nel documento</span>
+      <kbd>Ctrl Z</kbd><span>Annulla</span>
+      <kbd>Ctrl Y · Ctrl ⇧ Z</kbd><span>Ripristina</span>
+      <kbd>Ctrl D</kbd><span>Duplica l'elemento selezionato</span>
+      <kbd>Frecce</kbd><span>Sposta l'elemento selezionato (con ⇧ più veloce)</span>
+      <kbd>Canc</kbd><span>Elimina l'elemento selezionato</span>
+      <kbd>Ctrl + / Ctrl −</kbd><span>Zoom (anche Ctrl + rotellina)</span>
+      <kbd>Ctrl 0</kbd><span>Adatta alla larghezza</span>
+      <kbd>PagSu · PagGiù</kbd><span>Pagina precedente / successiva</span>
+      <kbd>Esc</kbd><span>Torna a «Seleziona»</span>
+    </div>
+    <p class="note">Sul telefono: due dita per lo zoom, tocco su un'aggiunta per selezionarla, pallini agli angoli per ridimensionarla.</p>
+    <p class="note" style="display:flex;gap:8px;align-items:center;color:var(--ok);font-weight:600"><svg class="ico"><use href="#i-shield"/></svg>Nessun file lascia il dispositivo: tutto avviene nel browser.</p>
+    <p class="note" id="ver2"></p>
+  </div>
+</div></div>
+
+<div id="toast" role="status" aria-live="polite"><span class="ti"><svg class="ico"><use href="#i-info"/></svg></span><span id="toastMsg"></span></div>
+<div id="busy" role="alert" aria-busy="true"><div class="card"><div class="spin"></div><div id="busyMsg">Un momento…</div><div class="bar" id="busyBar" hidden><i id="busyFill"></i></div></div></div>
 
 <script src="lib/pdf-lib.min.js"></script>
 <script type="module" src="app.js"></script>
