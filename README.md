@@ -12,8 +12,9 @@ I documenti restano sul dispositivo: l'app non carica nulla online e non richied
 - **Cancella**: tocca una scritta o un'aggiunta per toglierla, oppure trascina un riquadro sulla zona da cancellare (testo, immagini, loghi, firme).
 - **Bianchetto**: rettangoli pieni bianchi o neri per coprire dati; restano spostabili e ridimensionabili fino al salvataggio.
 - **Timbri rapidi** vettoriali: PAGATO IL (data di oggi), COPIA CONFORME, APPROVATO, ANNULLATO. In più le proprie immagini (timbro aziendale, logo).
-- **Oggetti**: ogni aggiunta selezionata ha maniglie ai quattro angoli e una ✕ per eliminarla. Tasti: Ctrl+Z / Ctrl+Y, Canc, Ctrl+S.
+- **Oggetti**: ogni aggiunta selezionata ha maniglie ai quattro angoli e una ✕ per eliminarla. Tasti: Ctrl+Z / Ctrl+Y, Canc, Ctrl+S, Ctrl+P.
 - **Due dita**: zoom e spostamento della pagina senza lasciare segni.
+- **Stampa** (🖨 in alto): stampa il documento con aggiunte e cancellazioni. Sul PC usa il visualizzatore PDF del browser; sul telefono prepara le pagine come immagini a circa 200 dpi.
 - **Salva / Condividi**: crea sempre una copia «nome - modificato.pdf»; l'originale non viene toccato.
 - **Da altre app** (Android, con l'app installata da Chrome): menu «Condividi» di WhatsApp, Gmail ecc. → ninetto-pdf.
 

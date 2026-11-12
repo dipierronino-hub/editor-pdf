@@ -2,7 +2,7 @@
 // I documenti restano sul dispositivo: nessun caricamento online.
 import * as pdfjsLib from './lib/pdf.min.mjs';
 
-const VERSIONE = '2026-11-12d';
+const VERSIONE = '2026-11-12e';
 const LIB = new URL('./lib/', import.meta.url).href;
 pdfjsLib.GlobalWorkerOptions.workerSrc = LIB + 'pdf.worker.min.mjs';
 const { PDFDocument, StandardFonts, rgb, degrees, BlendMode, LineCapStyle } = window.PDFLib;
@@ -1074,6 +1074,47 @@ async function save() {
   const f = await makeFile(S.pages, 'modificato'); if (!f) return;
   download(f); S.dirty = false; toast('Salvato come «' + f.name + '»');
 }
+// Stampa il documento come verrebbe salvato (con aggiunte e cancellazioni).
+// Sul PC il PDF va al visualizzatore del browser (testo nitido); sul telefono, dove un PDF non si può stampare
+// da una pagina web, le pagine vengono preparate come immagini ad alta risoluzione (circa 200 dpi) e stampate dalla pagina stessa.
+async function stampa() {
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  const f = await makeFile(S.pages, 'modificato'); if (!f) return;
+  const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent));
+  if (!mobile) {
+    const old = $('#printFrame'); if (old) { URL.revokeObjectURL(old.src); old.remove(); }
+    const fr = document.createElement('iframe'); fr.id = 'printFrame';
+    fr.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0';
+    fr.src = URL.createObjectURL(f);
+    fr.onload = () => setTimeout(() => { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { console.warn(e); window.open(fr.src, '_blank'); } }, 300);
+    document.body.append(fr);
+    return;
+  }
+  busy(true, 'Preparo la stampa…');
+  let doc = null;
+  try {
+    doc = await pdfjsLib.getDocument({ data: new Uint8Array(await f.arrayBuffer()), cMapUrl: LIB + 'cmaps/', cMapPacked: true, standardFontDataUrl: LIB + 'standard_fonts/' }).promise;
+    let box = $('#stampa'); if (!box) { box = document.createElement('div'); box.id = 'stampa'; document.body.append(box); }
+    box.textContent = '';
+    let pagina = null;
+    for (let i = 1; i <= doc.numPages; i++) {
+      const pg = await doc.getPage(i), v1 = pg.getViewport({ scale: 1 });
+      if (!pagina) pagina = v1;
+      let k = 200 / 72; if (v1.width * v1.height * k * k > 16e6) k = Math.sqrt(16e6 / (v1.width * v1.height));
+      const vp = pg.getViewport({ scale: k }), c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+      await pg.render({ canvasContext: cx, viewport: vp }).promise;
+      const blob = await new Promise(r => c.toBlob(r, 'image/png')); c.width = 0;
+      const im = new Image(); im.src = URL.createObjectURL(blob); await im.decode().catch(() => { }); box.append(im);
+    }
+    let st = $('#stampaPagina'); if (!st) { st = document.createElement('style'); st.id = 'stampaPagina'; document.head.append(st); }
+    st.textContent = `@page{size:${(pagina.width / 72 * 25.4).toFixed(1)}mm ${(pagina.height / 72 * 25.4).toFixed(1)}mm;margin:0}`;
+    busy(false);
+    window.addEventListener('afterprint', () => { $$('#stampa img').forEach(i => URL.revokeObjectURL(i.src)); box.textContent = ''; }, { once: true });
+    window.print();
+  } catch (e) { console.error(e); toast('Non sono riuscito a preparare la stampa: ' + (e.message || e), 6000); }
+  finally { busy(false); if (doc) doc.destroy(); }
+}
 async function share() {
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   const f = await makeFile(S.pages, 'modificato'); if (!f) return;
@@ -1193,7 +1234,7 @@ function hint(t) { const s = document.createElement('span'); s.className = 'hint
 function ui() {
   const has = S.pages.length > 0;
   $('#empty').style.display = has ? 'none' : ''; $('#zoom').classList.toggle('on', has);
-  $('#bSave').disabled = $('#bShare').disabled = !has;
+  $('#bSave').disabled = $('#bShare').disabled = $('#bPrint').disabled = !has;
   $$('#tools .tool').forEach(b => { b.disabled = !has; });
   $('#bUndo').disabled = !S.undo.length; $('#bRedo').disabled = !S.redo.length;
   $$('#tools [data-tool]').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === S.tool));
@@ -1223,12 +1264,13 @@ function resizeText(d) { const a = selAnn(); if (!a) return; snap(); a.size = cl
 /* ---------- comandi ---------- */
 $('#bOpen').onclick = $('#bOpen2').onclick = () => $('#fOpen').click();
 $('#fOpen').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; openFiles(fs, false); };
-$('#bSave').onclick = save; $('#bShare').onclick = share;
+$('#bSave').onclick = save; $('#bShare').onclick = share; $('#bPrint').onclick = stampa;
 $('#bUndo').onclick = undo; $('#bRedo').onclick = redo;
 $('#zIn').onclick = () => setScale(S.scale * 1.25); $('#zOut').onclick = () => setScale(S.scale / 1.25); $('#zFit').onclick = fit;
 document.addEventListener('keydown', e => {
   const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement && document.activeElement.tagName);
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (S.pages.length) save(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') { e.preventDefault(); if (S.pages.length) stampa(); }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); $('#fOpen').click(); }
   else if (typing) return;
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }

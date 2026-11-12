@@ -127,12 +127,15 @@ textarea.in,input.in,select.in{width:100%;font:inherit;font-size:16px;padding:10
 #busy{position:fixed;inset:0;background:rgba(255,255,255,.7);display:none;align-items:center;justify-content:center;z-index:50;font-weight:600}
 #busy.on{display:flex}
 @media(prefers-reduced-motion:no-preference){.sheet .box{animation:up .18s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}}}
+#stampa{display:none}
+@media print{body>*:not(#stampa){display:none!important}#stampa{display:block}#stampa img{display:block;width:100%;height:auto;break-after:page;page-break-after:always}#stampa img:last-child{break-after:auto;page-break-after:auto}}
 </style>
 </head>
 <body>
 <div id="top">
   <button class="tb" id="bOpen">Apri</button>
   <div class="name" id="docName">ninetto-pdf</div>
+  <button class="tb" id="bPrint" disabled title="Stampa (Ctrl+P)" aria-label="Stampa">🖨</button>
   <button class="tb" id="bShare" disabled>Condividi</button>
   <button class="tb pri" id="bSave" disabled>Salva</button>
 </div>
