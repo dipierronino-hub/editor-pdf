@@ -2,7 +2,7 @@
 // I documenti restano sul dispositivo: nessun caricamento online.
 import * as pdfjsLib from './lib/pdf.min.mjs';
 
-const VERSIONE = '2026-11-13a';
+const VERSIONE = '2026-11-13b';
 const LIB = new URL('./lib/', import.meta.url).href;
 pdfjsLib.GlobalWorkerOptions.workerSrc = LIB + 'pdf.worker.min.mjs';
 const { PDFDocument, StandardFonts, rgb, degrees, BlendMode, LineCapStyle } = window.PDFLib;
@@ -763,7 +763,11 @@ function timbroRapido(t) {
   const pa = paginaAttiva(); if (!pa) return;
   const testo = t.testo(), h = 40, w = Math.min(Math.max(120, testo.length * 12.5), pa.r.p.w * 0.6);
   closeSheets(); setTool('mano'); snap('Timbro');
-  const a = { id: nid(), t: 'stamp', x: pa.x - w / 2, y: pa.y - h / 2, w, h, text: testo, c: t.c, ang: -8 };
+  // se nello stesso punto c'è già un timbro, il nuovo va sotto (non si sovrappongono)
+  let y = pa.y - h / 2;
+  for (let k = 0; k < 8 && pa.r.p.ann.some(o => o.t === 'stamp' && Math.abs(o.y - y) < h && Math.abs(o.x + o.w / 2 - pa.x) < w); k++) y += h + 14;
+  if (y + h > pa.r.p.h) y = pa.y - h / 2;
+  const a = { id: nid(), t: 'stamp', x: pa.x - w / 2, y, w, h, text: testo, c: t.c, ang: -8 };
   pa.r.p.ann.push(a); select(pa.r.p.id, a.id);
   toast('Timbro inserito: trascinalo dove serve');
 }
