@@ -1,5 +1,5 @@
 // ninetto-pdf — funzionamento offline e ricezione dei PDF condivisi da altre app.
-const CACHE = 'editor-pdf-shell-v5';
+const CACHE = 'editor-pdf-shell-v6';
 const CONDIVISI = 'editor-pdf-condivisi';
 const SHELL = ['./', 'index.html', 'app.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/favicon-48.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
